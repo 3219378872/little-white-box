@@ -1,0 +1,10 @@
+# Child repositories are independent git checkouts.
+little-white-box-content-community/
+little-white-box-front/
+refactor-content-community/
+
+.worktree/
+*.swp
+.DS_Store
+
+.archived/
