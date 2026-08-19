@@ -1,0 +1,24 @@
+# Local-only remaps and restart policy. Not used by production compose.
+services:
+  seaweedfs:
+    ports: !override
+      - "9333:9333"
+      - "18080:8080"
+      - "8887:8888"
+      - "8333:8333"
+  grafana:
+    ports: !override
+      - "33000:3000"
+  rocketmq-namesrv:
+    restart: unless-stopped
+  rocketmq-broker:
+    restart: unless-stopped
+    # JDK 8u372 + host cgroup v2: StoreUtil.<clinit> NPEs in
+    # CgroupV2Subsystem.getInstance, then every Pull fails with
+    # NoClassDefFoundError. Disable container metrics so OS MXBean works.
+    environment:
+      JAVA_OPT_EXT: "-Duser.home=/home/rocketmq -server -Xms512m -Xmx512m -XX:-UseContainerSupport"
+  # latest Loki rejects the repo v11 schema; keep it from blocking `up`.
+  loki:
+    restart: "no"
+    profiles: ["loki"]
