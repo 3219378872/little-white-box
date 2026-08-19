@@ -33,8 +33,8 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
    图片压缩成功后上传：同样错误。  
    测试里有 `InitSnowflake`，`NewServiceContext` 没有。当时补了 interaction worker=3、media worker=4，**未提交**。
 
-4. **content-cleanup 消费组已存在**  
-   重复启动 `content-cleanup-service-group` 直接 fatal。删帖异步清理当时不可用，不影响读写帖。
+4. **content-cleanup 曾因同组双消费者 fatal**  
+   同一进程里 cleanup 与 count-sync 共用 `content-cleanup-service-group`，第二次 `Start()` 直接退出，公开点赞/收藏计数无法回写 `post.like_count`。已拆成 `content-count-sync-service-group`；本地栈会拉 `content-cleanup`。
 
 5. **搜索先 503，重建后才通**  
    旧 ES 文档 + Content 缺 `revision` 时 visibility 失败，客户端熔断。  
