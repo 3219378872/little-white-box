@@ -18,7 +18,3 @@ services:
     # NoClassDefFoundError. Disable container metrics so OS MXBean works.
     environment:
       JAVA_OPT_EXT: "-Duser.home=/home/rocketmq -server -Xms512m -Xmx512m -XX:-UseContainerSupport"
-  # latest Loki rejects the repo v11 schema; keep it from blocking `up`.
-  loki:
-    restart: "no"
-    profiles: ["loki"]

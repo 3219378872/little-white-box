@@ -51,13 +51,14 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 
 8. **旧库缺列缺表**  
    `xbh_content.post.revision`、`idempotency`，`xbh_user.personalization_preference`，`xbh_message.message.media_id`。  
-   只跑 `CREATE TABLE IF NOT EXISTS` 不会改已有表，要对旧表 `ALTER`。
+   只跑 `CREATE TABLE IF NOT EXISTS` 不会改已有表，要对旧表 `ALTER`。  
+   ClickHouse `daily_aggregates` 同样不会随旧卷自动出现；`just up` 会把 `xbh_analytics.sql` 再执行一遍（`CREATE IF NOT EXISTS`）。
 
 9. **SeaweedFS 健康检查 unhealthy，S3 可用**  
    健康检查 wget `localhost:9333` 曾 Connection refused；Master/S3 实际可访问。上传成功后原图/缩略图 HTTP 200。
 
-10. **Loki `latest` 与仓库 v11 schema 不兼容**  
-    retention / structured metadata / tsdb 校验失败，容器重启循环。不影响业务。
+10. **Loki 曾因 `latest` + v11/boltdb-shipper 起不来**  
+    已钉 `grafana/loki:3.7.6`，配置改为 v13/tsdb，并补 `compactor.delete_request_store`。本地 `just up` 会等 `:3100`。
 
 11. **端口冲突**  
     Grafana 默认 3000 与前端冲突（已映到 33000）。SeaweedFS 8080 与 `sub2api` 冲突（已映到 18080）。3000/3001 本机另有进程。
@@ -86,5 +87,5 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 - 后端提交：Gateway CORS、interaction/media snowflake、本地 ListenOn 或 etcd 发布 IP 约定。
 - 启动脚本：中间件、RPC 覆盖配置、反代、搜索 rebuild 一条龙。
 - schema：旧卷迁移或文档写明必须对齐 `deploy/sql`。
-- Loki：钉镜像或改 schema，避免 `latest`。
+- Loki：已钉 3.7.6 并升到 v13/tsdb；不要改回 `latest`。
 - content-cleanup：可重置消费组或换 group 名后再启。

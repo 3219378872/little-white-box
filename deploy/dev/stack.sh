@@ -98,6 +98,21 @@ wait_port() {
   return 1
 }
 
+wait_http() {
+  local url="$1" seconds="${2:-90}" label="${3:-$url}"
+  local i code
+  for ((i = 0; i < seconds; i++)); do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$url" || echo 000)"
+    if [[ "$code" == "200" ]]; then
+      echo "ready: $label"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "timeout waiting for $label" >&2
+  return 1
+}
+
 http_code() {
   curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "$1" || echo "000"
 }
@@ -123,6 +138,14 @@ wait_topics() {
   done
   echo "timeout waiting for rocketmq topics" >&2
   return 1
+}
+
+# docker-entrypoint-initdb.d only runs on an empty volume. Re-apply the
+# idempotent analytics DDL so old ClickHouse volumes pick up new tables.
+apply_analytics_schema() {
+  local sql="$BACKEND/deploy/sql/xbh_analytics.sql"
+  echo "applying ClickHouse analytics schema"
+  docker exec -i xbh-clickhouse clickhouse-client --multiquery <"$sql"
 }
 
 start_svc() {
@@ -190,8 +213,6 @@ all_app_names() {
 middleware_up() {
   echo "starting middleware containers"
   compose up -d
-  docker update --restart=no xbh-loki >/dev/null 2>&1 || true
-  docker stop xbh-loki >/dev/null 2>&1 || true
   wait_port 127.0.0.1 3306 90 mysql
   wait_port 127.0.0.1 6379 60 redis
   wait_port 127.0.0.1 2379 60 etcd
@@ -199,6 +220,9 @@ middleware_up() {
   wait_port 127.0.0.1 9876 90 rocketmq-namesrv
   wait_port 127.0.0.1 10911 180 rocketmq-broker
   wait_topics 180
+  wait_port 127.0.0.1 8123 60 clickhouse
+  apply_analytics_schema
+  wait_http "http://127.0.0.1:3100/ready" 90 loki
   wait_port 127.0.0.1 9333 60 seaweedfs-master || true
 }
 
@@ -313,4 +337,5 @@ stack_status() {
   printf ':%s api    %s\n' "$ENTRY_PORT" "$(http_code "http://127.0.0.1:$ENTRY_PORT/api/v1/")"
   printf ':%s gw     %s\n' "$GATEWAY_PORT" "$(http_code "http://127.0.0.1:$GATEWAY_PORT/")"
   printf ':%s front  %s\n' "$FRONT_PORT" "$(http_code "http://127.0.0.1:$FRONT_PORT/")"
+  printf ':3100 loki  %s\n' "$(http_code "http://127.0.0.1:3100/ready")"
 }
