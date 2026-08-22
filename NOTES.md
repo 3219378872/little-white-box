@@ -81,7 +81,33 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
     `SERVER_HOST` 默认空。没有反代时浏览器会打到前端端口的 `/api`，不是 8888。
 
 16. **开发反代只在本机**  
-    `/tmp/xbh-dev-proxy.conf` + `xbh-dev-proxy` 未进仓库。重启机器后要重拉。
+    `/tmp/xbh-dev-proxy.conf` + `xbh-dev-proxy` 未进仓库。重启机器后要重拉。  
+    （2026-08-22 起已收编为 `deploy/dev/proxy.conf` + stack.sh `proxy_up`。）
+
+17. **外网唯一入口是 :3002**（2026-08-22）  
+    `:3003` 是 `flutter run -d web-server` 的 shelf 静态服务，没有任何反代能力；
+    直连它时所有 `/api/*` 都会命中 SPA 兜底返回 index.html（HTTP 200 但内容是 HTML）。
+    外网访问必须走 `3002.<host>:3000`。
+
+18. **nginx `location /` 必须用 `$http_host` 而不是 `$host`**（2026-08-22）  
+    `$host` 会剥掉端口；DWDS 按 Host 头拼调试回调 URL，拿到无端口地址后
+    WebSocket 握手失败 → webdev 启动链路中断 → Dart `main()` 永不执行 →
+    白屏且控制台无报错。改用 `$http_host` 保留客户端原始 host:port。
+
+19. **机器级 http_proxy 会劫持 DWDS 调试信道导致白屏**（2026-08-22）  
+    本机全局代理指向 `172.18.0.1:17897` 时，flutter 工具内 DWDS 建立调试
+    WebSocket/VM-service 连接被代理破坏（日志表现为反复
+    `DartDevelopmentServiceException: ... not upgraded to websocket`），后端永远
+    不发 RunRequest，浏览器侧 883 个模块全部加载完成但 main() 不执行——白屏、
+    无红错、极易误判为前端代码问题。stack.sh `frontend_up` 已对前端进程剥离
+    全部 proxy 变量；手工启动前端时也要同样处理。release 构建不受影响
+    （无调试信道），可用来做快速对照。
+
+20. **flutter run 重启后浏览器缓存会静默搞坏引导**（2026-08-22）  
+    每次重启 dev server，`main.dart.js`/`main_module.bootstrap.js` 内的
+    `$dartAppId`、入口路径等都会变化；浏览器若复用旧缓存模块可能混出不一致状态
+    （症状：加载条消失后全白、脚本数异常）。验证渲染问题一律先硬刷新或 InPrivate
+    窗口排除缓存。
 
 ## 建议后续
 
