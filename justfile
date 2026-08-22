@@ -62,6 +62,17 @@ seed-eval-corpus:
 # 测试账号 + eval 语料
 seed: seed-dev-user seed-eval-corpus
 
+# 黑盒 e2e 套件（对真实联调栈；可传 pytest 路径/-k 过滤，如 just e2e -k search）
+e2e *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    load_env >/dev/null 2>&1 || true
+    export PYTHONDONTWRITEBYTECODE=1
+    exec python3 -m pytest -v {{args}} "$ROOT/deploy/dev/e2e"
+
 # 只起/停 Docker 中间件
 middleware-up:
     #!/usr/bin/env bash
