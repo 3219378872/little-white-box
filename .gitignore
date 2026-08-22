@@ -11,4 +11,7 @@ node_modules/
 __pycache__/
 *.py[cod]
 
+# Dev-stack local secrets (loaded by deploy/dev/stack.sh); never commit.
+deploy/dev/.env
+
 .archived/
