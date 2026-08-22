@@ -103,7 +103,14 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
     全部 proxy 变量；手工启动前端时也要同样处理。release 构建不受影响
     （无调试信道），可用来做快速对照。
 
-20. **flutter run 重启后浏览器缓存会静默搞坏引导**（2026-08-22）  
+20. **CanvasKit 已本地托管，浏览器不再依赖 gstatic**（2026-08-22）  
+    Flutter 引擎默认从 `www.gstatic.com/flutter-canvaskit/<engineRev>/` 拉取，
+    用户网络不通时会精确复现"加载条消失→全白→无红错"。现由
+    `FLUTTER_WEB_CANVASKIT_URL=/canvaskit/` + nginx 挂载
+    `flutter_web_sdk/canvaskit/`（stack.sh `proxy_up`）提供同源产物；
+    SDK 升级后引擎版本自动跟随缓存目录。
+
+21. **flutter run 重启后浏览器缓存会静默搞坏引导**（2026-08-22）  
     每次重启 dev server，`main.dart.js`/`main_module.bootstrap.js` 内的
     `$dartAppId`、入口路径等都会变化；浏览器若复用旧缓存模块可能混出不一致状态
     （症状：加载条消失后全白、脚本数异常）。验证渲染问题一律先硬刷新或 InPrivate
