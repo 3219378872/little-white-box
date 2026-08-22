@@ -11,6 +11,7 @@ ETC_DIR="${ETC_DIR:-/tmp/xbh-etc}"
 ENV_FILE="${ENV_FILE:-/tmp/xbh-dev.env}"
 LOCAL_ENV="${LOCAL_ENV:-$ROOT/deploy/dev/.env}"
 PROXY_NAME="${PROXY_NAME:-xbh-dev-proxy}"
+CANVASKIT_DIR="${CANVASKIT_DIR:-}"
 PROXY_CONF="${PROXY_CONF:-$ROOT/deploy/dev/proxy.conf}"
 OVERRIDE="${OVERRIDE:-$ROOT/deploy/dev/middleware-override.yml}"
 COMPOSE_FILE="${COMPOSE_FILE:-$BACKEND/deploy/docker-compose.middleware.yml}"
@@ -300,12 +301,34 @@ middleware_down() {
   docker stop "$PROXY_NAME" >/dev/null 2>&1 || true
 }
 
+# Local copy of the Flutter web engine assets (CanvasKit/Skwasm). Serving them
+# from the dev origin keeps browsers behind restrictive networks from needing
+# gstatic.com, which otherwise hangs engine init with a blank page.
+resolve_canvaskit_dir() {
+  if [[ -z "$CANVASKIT_DIR" ]]; then
+    local fl sdk
+    fl="$(command -v flutter 2>/dev/null || true)"
+    if [[ -n "$fl" && -f "$fl" ]]; then
+      sdk="$(cd "$(dirname "$(readlink -f "$fl")")/../.." && pwd)"
+      CANVASKIT_DIR="$sdk/bin/cache/flutter_web_sdk/canvaskit"
+    fi
+  fi
+  [[ -n "$CANVASKIT_DIR" && -d "$CANVASKIT_DIR" ]]
+}
+
 proxy_up() {
   if docker inspect "$PROXY_NAME" >/dev/null 2>&1; then
     docker rm -f "$PROXY_NAME" >/dev/null
   fi
   echo "starting $PROXY_NAME on :$ENTRY_PORT"
+  local mounts=()
+  if resolve_canvaskit_dir; then
+    mounts+=(-v "$CANVASKIT_DIR:/var/www/canvaskit:ro")
+  else
+    echo "warning: flutter_web_sdk canvaskit dir not found, /canvaskit/ disabled" >&2
+  fi
   docker run -d --name "$PROXY_NAME" --network host --restart unless-stopped \
+    "${mounts[@]}" \
     -v "$PROXY_CONF:/etc/nginx/nginx.conf:ro" \
     nginx:stable-alpine >/dev/null
 }
@@ -331,7 +354,7 @@ frontend_up() {
     # Proxy env vars break the DWDS debug websocket (RunRequest never reaches
     # the browser -> blank page). The dev server only talks to localhost.
     setsid env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-      -u ALL_PROXY -u all_proxy \
+      -u ALL_PROXY -u all_proxy FLUTTER_WEB_CANVASKIT_URL=/canvaskit/ \
       make dev-real HOST=0.0.0.0 PORT="$FRONT_PORT" \
       >"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
