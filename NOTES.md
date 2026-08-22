@@ -55,8 +55,8 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
    只跑 `CREATE TABLE IF NOT EXISTS` 不会改已有表，要对旧表 `ALTER`。  
    ClickHouse `daily_aggregates` 同样不会随旧卷自动出现；`just up` 会把 `xbh_analytics.sql` 再执行一遍（`CREATE IF NOT EXISTS`）。
 
-9. **SeaweedFS 健康检查 unhealthy，S3 可用**  
-   健康检查 wget `localhost:9333` 曾 Connection refused；Master/S3 实际可访问。上传成功后原图/缩略图 HTTP 200。
+9. **SeaweedFS 健康检查 unhealthy，S3 可用**（2026-08-22 已修复）
+   根因：容器内 `localhost` 同时解析到 `127.0.0.1` 和 `::1`，busybox wget 走 IPv6 的 `::1`，而 SeaweedFS 只监听 IPv4（无 tcp6），故 `wget localhost:9333` Connection refused；服务本身一直正常（上传原图/缩略图 HTTP 200）。修法：探针 URL 改为 `http://127.0.0.1:9333/cluster/status`，已改入后端 `deploy/docker-compose.middleware.yml` 并重建容器转 healthy。
 
 10. **Loki 曾因 `latest` + v11/boltdb-shipper 起不来**  
     已钉 `grafana/loki:3.7.6`，配置改为 v13/tsdb，并补 `compactor.delete_request_store`。本地 `just up` 会等 `:3100`。
