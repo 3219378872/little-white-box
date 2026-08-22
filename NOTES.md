@@ -85,8 +85,11 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 
 ## 建议后续
 
+> 2026-08-22 更新：联调编排已收敛到根仓 `justfile` + `deploy/dev/`。proxy.conf 已进仓库并
+> 由 stack 管理，搜索 rebuild 已自动化于 app-up；下文第 15/16 条中「未进仓库」等表述自此
+> 过时，仅作当时代快照保留。
+
 - 后端提交：Gateway CORS、interaction/media snowflake、本地 ListenOn 或 etcd 发布 IP 约定。
-- 启动脚本：中间件、RPC 覆盖配置、反代、搜索 rebuild 一条龙。
 - schema：旧卷迁移或文档写明必须对齐 `deploy/sql`。
 - Loki：已钉 3.7.6 并升到 v13/tsdb；不要改回 `latest`。
 - content-cleanup：可重置消费组或换 group 名后再启。
