@@ -6,8 +6,8 @@ from api_client import assert_error, parse_sse_stream
 def _open_stream_or_skip(client, message, attempts=4):
     resp = client.assistant_chat_stream(message, attempts=attempts)
     if resp.status_code != 200:
-        pytest.skip(
-            f"assistant LLM upstream unavailable (last HTTP {resp.status_code})")
+        raise AssertionError(
+            f"assistant chat returned HTTP {resp.status_code}: {resp.text[:150]}")
     return resp
 
 

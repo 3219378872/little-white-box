@@ -36,11 +36,16 @@ def test_search_users_matches_existing_account(anon):
     assert any(item["username"] == ADMIN_USERNAME for item in r.json()["users"])
 
 
-def test_newly_registered_user_excluded_from_public_search(make_user, anon):
+def test_newly_registered_user_publicly_searchable(make_user, anon):
     u = make_user()
-    resp = anon.search_users(u.username)
-    assert resp.status_code == 200
-    assert all(item["id"] != u.id for item in resp.json()["users"])
+
+    def found():
+        resp = anon.search_users(u.username)
+        if resp.status_code != 200:
+            return False
+        return any(item["id"] == u.id for item in resp.json()["users"])
+    eventually(found, desc="freshly registered user appears in public user search",
+               timeout=30)
 
 
 def test_search_users_total_field(anon):

@@ -216,7 +216,9 @@ class ApiClient:
         payload = {"message": message}
         if conversation_id is not None:
             payload["conversationId"] = conversation_id
-        return self.post("/api/v2/assistant/chat", json=payload, stream=stream)
+        headers = {"Accept": "text/event-stream"}
+        return self.post("/api/v2/assistant/chat", json=payload, stream=stream,
+                         headers=headers)
 
     def assistant_chat_stream(self, message, attempts=3):
         last = None

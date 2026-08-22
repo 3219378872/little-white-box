@@ -56,11 +56,22 @@ def test_create_idempotency_key_conflict_on_different_payload(user):
     assert_error(conflict, 409, 2008)
 
 
-def test_update_requires_non_empty_content(user, published_post):
+def test_update_title_only_keeps_content(user, published_post, anon):
     post = published_post(user.client)
+    new_title = f"title-only {unique_marker()}"
     r = user.client.update_post(post["postId"],
-                                {"title": "new", "expectedRevision": post["revision"]})
-    assert_error(r, 400, 2004)
+                                {"title": new_title,
+                                 "expectedRevision": post["revision"]})
+    assert r.status_code == 200, r.text[:200]
+    detail = anon.post_detail(post["postId"]).json()
+    assert detail["title"] == new_title
+    assert detail["content"] == f"content of {post['title']}"
+
+
+def test_update_empty_payload_rejected(user, published_post):
+    post = published_post(user.client)
+    r = user.client.update_post(post["postId"], {"expectedRevision": post["revision"]})
+    assert_error(r, 400, 2)
 
 
 def test_update_revision_increments(user, published_post, anon):
