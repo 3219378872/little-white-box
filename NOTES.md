@@ -129,30 +129,35 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 
 ## 黑盒 e2e 首轮发现（2026-08-22）
 
-> 来源：`deploy/dev/e2e/` 套件（104 用例）对真实联调栈的首轮运行与契约核对。
-> 每项标注对应测试名，修复落地后在此回写状态。
+> 来源：`deploy/dev/e2e/` 套件（105 用例）对真实联调栈的首轮运行与契约核对。
+> 三项缺陷已于当日修复（后端仓 main：81afe21 / 749eccb / 4ee5875，均推送 origin），
+> e2e 断言已同步校准（根仓 1d1e1a8），全量 105 passed。
 
-### 缺陷（已立项修复）
+### 缺陷（已修复）
 
 1. **新注册用户永久不可被搜索** — `user/rpc/internal/logic/register_logic.go`
    `newUser()` 未设置 `Status`，Go 零值 0 显式写入，覆盖 schema `DEFAULT 1`
-   （`0:禁用 1:正常`）；而用户搜索 `SearchPublic` 过滤 `status=1`。全库 418 个
-   注册用户 status 全为 0 且无任何置 1 路径。对应 e2e：
-   `test_search.py::test_newly_registered_user_excluded_from_public_search`
-   （固化现状，修复后需翻转为正向断言）。
+   （`0:禁用 1:正常`）；而用户搜索 `SearchPublic` 过滤 `status=1`。
+   **已修**：注册显式写 status=1；`deploy/sql/backfill_user_status.sql` 已在本地栈
+   执行（419 用户全部置 1）。e2e 已翻转为正向断言
+   （`test_search.py::test_newly_registered_user_publicly_searchable`）。
 
 2. **Assistant 上游 LLM 失败时行为不一致** — `assistant/rpc/internal/logic/chat_logic.go`
-   `Generate` 直接用请求级 ctx，上游超时耗尽预算后降级路径
-   （`sendEvidenceDegraded` → `persistAssistant`）在已取消的 ctx 上全部失败，
-   日志见 `assistant evidence degradation persistence failed: context canceled`，
-   网关侧表现为裸 HTTP 500 `{code:3}`；ctx 尚存活时则返回 200 + 单个 error 帧。
-   对应 e2e：`test_assistant.py::test_stream_emits_tokens_then_done` 等。
+   根因链：go-zero `TimeoutHandler` 仅对带 `Accept: text/event-stream` 的请求豁免
+   全局 3s 超时；不带该头的客户端在 LLM 慢响应时被网关掐断，rpc 侧降级链在已取消的
+   ctx 上全部失败（日志 `assistant evidence degradation persistence failed:
+   context canceled`），最终裸 500 `{code:3}`。
+   **已修**：生成改用脱离取消信号的预算内上下文（LLM.TimeoutMs+余量）；会话持久化
+   经 `persistContext()` 在 ctx 已取消时切换短预算脱离上下文；移除 send() 的取消
+   预检与工具错误路径的提前返回，取消后仍发出降级终止事件。e2e 客户端补发正确
+   Accept 头并把非 200 改为硬断言。
 
-3. **UpdatePostV2 与 `.api` 分歧** — `content/rpc/internal/logic/update_post_logic.go:46`
-   实现无条件要求 content≥1，`.api` 声明 `optional`；决策表
-   `rest_decision_table_test.go:478` 的 VALID 用例本就只传 title。收口方向：
-   局部更新语义（空串=保持现值）。对应 e2e：
-   `test_post.py::test_update_requires_non_empty_content`（修复后需反转）。
+3. **UpdatePostV2 与 `.api` 分歧** — `content/rpc/internal/logic/update_post_logic.go`
+   实现无条件要求 content≥1 且整体覆写，`.api` 声明两者 optional。
+   **已修**：局部更新语义——空串=未提供、合并现值后再校验长度；空载荷 ParamError；
+   标签改为显式提供才替换（缺省保留现有关联与事件旧值，模型层加 `replaceTags`
+   开关）；outbox 事件改用合并后的标题/摘要。e2e 新增 title-only 成功用例，
+   反转原 ContentEmpty 断言。
 
 ### 怪癖（记录存档，暂不修）
 
@@ -162,9 +167,10 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 - 推荐流游标绑定首次请求的 `requestId`，换 id 即参数错误（未文档化强约束）。
 - 行为事件校验严：exposure 需 scene+requestId+position≥1；客户端禁报 like/impression；
   空/超量批次报错文案含「行为事件数量」。
+- go-zero SSE 超时豁免依赖客户端 `Accept: text/event-stream` 头；裸 curl/脚本
+  不带头时长对话会被 3s 全局超时杀掉（前端浏览器行为正常）。
 
 ### 现场环境
 
-- assistant 外部 LLM（opencode.ai zen）经本机代理当前不可达：失败时有时 500、
-  有时 200+error 帧。e2e 套件对「无 token 帧」的用例保留 skip 语义，
-  上游恢复后自动转严格断言。
+- assistant 外部 LLM（opencode.ai zen）经本机代理间歇可达：不可达时段流内返回
+  error 帧（degraded），可达时正常出 token；套件仅在「无 token 帧」时 skip。
