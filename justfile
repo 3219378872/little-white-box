@@ -41,6 +41,27 @@ status:
     source "$ROOT/deploy/dev/stack.sh"
     stack_status
 
+# 写入本地测试账号 admin / 123456（幂等，已存在则重置密码）
+seed-dev-user:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    apply_dev_user
+
+# 把 eval/corpus.json 与 deploy/dev/corpus_2000.json 灌入 xbh_content.post（幂等）
+seed-eval-corpus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    apply_eval_corpus
+
+# 测试账号 + eval 语料
+seed: seed-dev-user seed-eval-corpus
+
 # 只起/停 Docker 中间件
 middleware-up:
     #!/usr/bin/env bash

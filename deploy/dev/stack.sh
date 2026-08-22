@@ -148,6 +148,73 @@ apply_analytics_schema() {
   docker exec -i xbh-clickhouse clickhouse-client --multiquery <"$sql"
 }
 
+mysql_root() {
+  local pass="${MYSQL_ROOT_PASSWORD:-Xbh@MySQL2024!}"
+  docker exec -i -e MYSQL_PWD="$pass" xbh-mysql \
+    mysql -uroot --default-character-set=utf8mb4 "$@"
+}
+
+# Same empty-volume constraint as schema SQL. Seed the local test user on
+# every middleware-up so existing MySQL volumes get admin/123456.
+apply_dev_user() {
+  local sql="$ROOT/deploy/dev/seed_dev_user.sql"
+  echo "seeding local test user admin"
+  mysql_root <"$sql"
+}
+
+# Load frozen eval/corpus.json (ids 1001-1300) and optional bulk
+# deploy/dev/corpus_2000.json (ids 2001-4000) into xbh_content.post.
+# utf8mb4 is required; latin1 CLI charset double-encodes Chinese.
+apply_eval_corpus() {
+  local corpus="$BACKEND/eval/corpus.json"
+  local bulk="$ROOT/deploy/dev/corpus_2000.json"
+  local script="$ROOT/deploy/dev/seed_eval_corpus.py"
+  local files=("$corpus")
+  if [[ -f "$bulk" ]]; then
+    files+=("$bulk")
+  fi
+  echo "seeding eval corpus from ${files[*]}"
+  python3 "$script" "${files[@]}" | mysql_root
+  mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 1300;" </dev/null \
+    | awk '{print "eval corpus posts 1001-1300: "$1}'
+  mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 2001 AND 4000;" </dev/null \
+    | awk '{print "eval corpus posts 2001-4000: "$1}'
+}
+
+search_doc_count() {
+  python3 - "$1" <<'PY' || echo 0
+import json, sys, urllib.request
+url = sys.argv[1]
+try:
+    with urllib.request.urlopen(url, timeout=3) as resp:
+        print(int(json.load(resp).get("count") or 0))
+except Exception:
+    print(0)
+PY
+}
+
+# Direct SQL inserts do not emit post-create MQ events. Rebuild ES when
+# the index is behind published MySQL rows so search/assistant evals work.
+maybe_rebuild_search() {
+  load_env
+  local corpus_n es_n
+  corpus_n="$(mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 4000 AND status = 1;" </dev/null | tr -d '[:space:]')"
+  es_n="$(search_doc_count "http://127.0.0.1:9200/xbh_posts/_count" | tr -d '[:space:]')"
+  if [[ -z "$corpus_n" || "$corpus_n" == "0" ]]; then
+    echo "skip search rebuild: eval corpus not in mysql"
+    return 0
+  fi
+  if [[ "${es_n:-0}" -ge "$corpus_n" ]]; then
+    echo "search index already has ${es_n} docs (eval corpus=${corpus_n})"
+    return 0
+  fi
+  echo "rebuilding search index (es=${es_n} eval corpus=${corpus_n})"
+  (
+    cd "$BACKEND"
+    go run ./app/search/mq/cmd/rebuild -f "$ETC_DIR/app/search/mq/etc/search-consumer.yaml"
+  )
+}
+
 start_svc() {
   local name="$1" workdir="$2" bin="$3"
   shift 3
@@ -214,6 +281,8 @@ middleware_up() {
   echo "starting middleware containers"
   compose up -d
   wait_port 127.0.0.1 3306 90 mysql
+  apply_dev_user
+  apply_eval_corpus
   wait_port 127.0.0.1 6379 60 redis
   wait_port 127.0.0.1 2379 60 etcd
   wait_port 127.0.0.1 9200 90 elasticsearch
@@ -284,6 +353,7 @@ app_up() {
   proxy_up
   wait_port 127.0.0.1 "$GATEWAY_PORT" 240 gateway
   wait_port 127.0.0.1 "$FRONT_PORT" 240 frontend
+  maybe_rebuild_search
   echo "entry http://127.0.0.1:$ENTRY_PORT/  (page=$(http_code "http://127.0.0.1:$ENTRY_PORT/") api=$(http_code "http://127.0.0.1:$ENTRY_PORT/api/v1/"))"
 }
 

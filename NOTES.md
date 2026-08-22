@@ -9,7 +9,8 @@
 | 对外同源入口（nginx） | `:3002`（页面 + `/api` + `/xbh-media`） |
 | Flutter 开发服 | `127.0.0.1:3003`（不要直接给外网） |
 | Gateway | `127.0.0.1:8888` |
-| 测试账号 | `xiaobaihe` / `XbhTest123`（密码登录） |
+| 测试账号 | `admin` / `123456`（密码登录，`just up` / `just seed-dev-user` 写入） |
+| Eval 语料 | `eval/corpus.json` 300 帖（id 1001–1300），`just up` / `just seed-eval-corpus` 灌入 MySQL；搜索索引在 `app-up` 时若落后会 rebuild |
 
 nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`--network host`）。  
 本机 `net-transfer` 用 `3002.<host>:3000` 转到容器 3002。
