@@ -328,7 +328,11 @@ frontend_up() {
   echo "starting frontend on :$FRONT_PORT"
   (
     cd "$FRONTEND"
-    setsid make dev-real HOST=0.0.0.0 PORT="$FRONT_PORT" \
+    # Proxy env vars break the DWDS debug websocket (RunRequest never reaches
+    # the browser -> blank page). The dev server only talks to localhost.
+    setsid env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+      -u ALL_PROXY -u all_proxy \
+      make dev-real HOST=0.0.0.0 PORT="$FRONT_PORT" \
       >"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
   )
