@@ -126,3 +126,45 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 - schema：旧卷迁移或文档写明必须对齐 `deploy/sql`。
 - Loki：已钉 3.7.6 并升到 v13/tsdb；不要改回 `latest`。
 - content-cleanup：可重置消费组或换 group 名后再启。
+
+## 黑盒 e2e 首轮发现（2026-08-22）
+
+> 来源：`deploy/dev/e2e/` 套件（104 用例）对真实联调栈的首轮运行与契约核对。
+> 每项标注对应测试名，修复落地后在此回写状态。
+
+### 缺陷（已立项修复）
+
+1. **新注册用户永久不可被搜索** — `user/rpc/internal/logic/register_logic.go`
+   `newUser()` 未设置 `Status`，Go 零值 0 显式写入，覆盖 schema `DEFAULT 1`
+   （`0:禁用 1:正常`）；而用户搜索 `SearchPublic` 过滤 `status=1`。全库 418 个
+   注册用户 status 全为 0 且无任何置 1 路径。对应 e2e：
+   `test_search.py::test_newly_registered_user_excluded_from_public_search`
+   （固化现状，修复后需翻转为正向断言）。
+
+2. **Assistant 上游 LLM 失败时行为不一致** — `assistant/rpc/internal/logic/chat_logic.go`
+   `Generate` 直接用请求级 ctx，上游超时耗尽预算后降级路径
+   （`sendEvidenceDegraded` → `persistAssistant`）在已取消的 ctx 上全部失败，
+   日志见 `assistant evidence degradation persistence failed: context canceled`，
+   网关侧表现为裸 HTTP 500 `{code:3}`；ctx 尚存活时则返回 200 + 单个 error 帧。
+   对应 e2e：`test_assistant.py::test_stream_emits_tokens_then_done` 等。
+
+3. **UpdatePostV2 与 `.api` 分歧** — `content/rpc/internal/logic/update_post_logic.go:46`
+   实现无条件要求 content≥1，`.api` 声明 `optional`；决策表
+   `rest_decision_table_test.go:478` 的 VALID 用例本就只传 title。收口方向：
+   局部更新语义（空串=保持现值）。对应 e2e：
+   `test_post.py::test_update_requires_non_empty_content`（修复后需反转）。
+
+### 怪癖（记录存档，暂不修）
+
+- 评论回复创建成功后无任何 REST 端点可读取（列表只返回根评论）。
+- 超限上传返回 413 空 body，破坏统一 `{code,message}` 信封。
+- `/auth/verify-code` 成功时 body 为字面量 `null`。
+- 推荐流游标绑定首次请求的 `requestId`，换 id 即参数错误（未文档化强约束）。
+- 行为事件校验严：exposure 需 scene+requestId+position≥1；客户端禁报 like/impression；
+  空/超量批次报错文案含「行为事件数量」。
+
+### 现场环境
+
+- assistant 外部 LLM（opencode.ai zen）经本机代理当前不可达：失败时有时 500、
+  有时 200+error 帧。e2e 套件对「无 token 帧」的用例保留 skip 语义，
+  上游恢复后自动转严格断言。
