@@ -309,7 +309,7 @@ resolve_canvaskit_dir() {
     local fl sdk
     fl="$(command -v flutter 2>/dev/null || true)"
     if [[ -n "$fl" && -f "$fl" ]]; then
-      sdk="$(cd "$(dirname "$(readlink -f "$fl")")/../.." && pwd)"
+      sdk="$(cd "$(dirname "$(readlink -f "$fl")")/.." && pwd)"
       CANVASKIT_DIR="$sdk/bin/cache/flutter_web_sdk/canvaskit"
     fi
   fi
