@@ -163,12 +163,12 @@ apply_dev_user() {
 }
 
 # Load frozen eval/corpus.json (ids 1001-1300) and optional bulk
-# deploy/dev/corpus_2000.json (ids 2001-4000) into xbh_content.post.
+# backend eval/dev/corpus_2000.json (ids 2001-4000) into xbh_content.post.
 # utf8mb4 is required; latin1 CLI charset double-encodes Chinese.
 apply_eval_corpus() {
   local corpus="$BACKEND/eval/corpus.json"
-  local bulk="$ROOT/deploy/dev/corpus_2000.json"
-  local script="$ROOT/deploy/dev/seed_eval_corpus.py"
+  local bulk="$BACKEND/eval/dev/corpus_2000.json"
+  local script="$BACKEND/scripts/seed_eval_corpus.py"
   local files=("$corpus")
   if [[ -f "$bulk" ]]; then
     files+=("$bulk")

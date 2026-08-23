@@ -50,7 +50,7 @@ seed-dev-user:
     source "$ROOT/deploy/dev/stack.sh"
     apply_dev_user
 
-# 把 eval/corpus.json 与 deploy/dev/corpus_2000.json 灌入 xbh_content.post（幂等）
+# 把后端 eval/corpus.json 与 eval/dev/corpus_2000.json 灌入 xbh_content.post（幂等）
 seed-eval-corpus:
     #!/usr/bin/env bash
     set -euo pipefail

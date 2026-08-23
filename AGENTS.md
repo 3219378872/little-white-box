@@ -25,7 +25,7 @@
 | [deploy/dev/stack.sh](deploy/dev/stack.sh) | 被 source 的函数库，不要直接执行；路径、端口、容器名均可用环境变量覆盖（`BACKEND`、`FRONTEND`、`RUN_DIR`、`ETC_DIR`、`PROXY_NAME` 等），默认值集中在文件头 |
 | [deploy/dev/middleware-override.yml](deploy/dev/middleware-override.yml) | 叠加在后端 compose 之上的本地覆盖：端口重映射（Grafana→33000、SeaweedFS 卷 HTTP→18080）与 RocketMQ cgroup v2 规避参数 |
 | [deploy/dev/proxy.conf](deploy/dev/proxy.conf) | :3002 同源入口 nginx 配置（`/`→前端 :3003，`/api/`→Gateway :8888，`/xbh-media/`→SeaweedFS S3 :8333）；容器 `xbh-dev-proxy` 以 `--network host` 运行 |
-| [deploy/dev/seed_dev_user.sql](deploy/dev/seed_dev_user.sql)、[seed_eval_corpus.py](deploy/dev/seed_eval_corpus.py)、[corpus_2000.json](deploy/dev/corpus_2000.json)、[gen_eval_posts.py](deploy/dev/gen_eval_posts.py) | 测试账号与语料种子、批量语料生成器 |
+| [deploy/dev/seed_dev_user.sql](deploy/dev/seed_dev_user.sql) | 测试账号种子；eval 语料与生成/灌库脚本已迁至后端仓 `eval/`、`scripts/`（见下「运行时产物与数据」） |
 
 约束：
 
@@ -60,7 +60,8 @@
 - 进程 pid 与日志在 `/tmp/xbh-run/{pids,logs}`；RPC 配置覆盖副本在 `/tmp/xbh-etc`
   （复制仓库 yaml 并把 `ListenOn: 0.0.0.0:` 改写为 `127.0.0.1:`，不改子仓原文件）。
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
-  可选批量语料 id 2001–4000 来自 `corpus_2000.json`；搜索索引落后时 `app-up` 自动 rebuild。
+  可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
+  （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
 - 重启机器后 `/tmp` 产物与反代容器消失，重新 `just up` 即可。
 - 易变踩坑细节一律看 [NOTES.md](NOTES.md)，本文件只维护上述稳定事实。
 
