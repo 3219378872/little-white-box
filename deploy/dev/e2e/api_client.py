@@ -123,7 +123,6 @@ class ApiClient:
         return self.put("/api/v2/me/personalization", json={"enabled": enabled})
 
     def post_list(self, **params):
-        params.setdefault("page", 1)
         params.setdefault("pageSize", 20)
         return self.get("/api/v1/posts", params=params)
 

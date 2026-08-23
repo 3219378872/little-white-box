@@ -37,10 +37,10 @@ def test_user_posts_paging(user, anon):
     created = [user.client.create_post({"title": f"page {unique_marker()} {i}",
                                         "content": "body", "status": 1}).json()["postId"]
                for i in range(3)]
-    p1 = anon.user_posts(user.id, page=1, pageSize=2).json()
-    p2 = anon.user_posts(user.id, page=2, pageSize=2).json()
-    assert p1["total"] >= 3
+    p1 = anon.user_posts(user.id, pageSize=2).json()
     assert len(p1["list"]) <= 2
+    assert p1["nextCursor"], "满页应返回下一页游标"
+    p2 = anon.user_posts(user.id, pageSize=2, cursor=p1["nextCursor"]).json()
     ids1 = {item["id"] for item in p1["list"]}
     ids2 = {item["id"] for item in p2["list"]}
     assert not ids1 & ids2
