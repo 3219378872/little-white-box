@@ -75,8 +75,30 @@ prepare_etc() {
     find app -path '*/etc/*.yaml' -print0
   ) | while IFS= read -r -d '' rel; do
     mkdir -p "$ETC_DIR/$(dirname "$rel")"
-    sed 's/ListenOn: 0\.0\.0\.0:/ListenOn: 127.0.0.1:/' "$BACKEND/$rel" >"$ETC_DIR/$rel"
+    # Dev copies bind everything to loopback: RPC ListenOn (etcd registration
+    # must stay reachable from the host gateway) and the DevServer metrics/
+    # pprof HTTP endpoints, which would otherwise listen on all interfaces.
+    # Sub-repo yaml files are never modified.
+    sed -e 's/ListenOn: 0\.0\.0\.0:/ListenOn: 127.0.0.1:/' \
+        -e '/^DevServer:/,/^[^ ]/{s/^  Host: 0\.0\.0\.0/  Host: 127.0.0.1/}' \
+        "$BACKEND/$rel" >"$ETC_DIR/$rel"
   done
+}
+
+# middleware-override.yml uses the Compose Spec `ports: !override` YAML tag,
+# which needs docker compose >= 2.24; older versions fail to parse or merge
+# ports unexpectedly.
+require_compose_version() {
+  local ver min="2.24.0"
+  ver="$(docker compose version --short 2>/dev/null || true)"
+  if [[ -z "$ver" ]]; then
+    echo "docker compose plugin not found" >&2
+    return 1
+  fi
+  if [[ "$(printf '%s\n%s\n' "$min" "${ver#v}" | sort -V | head -n1)" != "$min" ]]; then
+    echo "docker compose >= $min required (ports: !override in middleware-override.yml), got ${ver}" >&2
+    return 1
+  fi
 }
 
 port_open() {
@@ -278,6 +300,7 @@ all_app_names() {
 }
 
 middleware_up() {
+  require_compose_version
   echo "starting middleware containers"
   compose up -d
   wait_port 127.0.0.1 3306 90 mysql
