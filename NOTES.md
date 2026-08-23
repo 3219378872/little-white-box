@@ -121,11 +121,55 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 > 2026-08-22 更新：联调编排已收敛到根仓 `justfile` + `deploy/dev/`。proxy.conf 已进仓库并
 > 由 stack 管理，搜索 rebuild 已自动化于 app-up；下文第 15/16 条中「未进仓库」等表述自此
 > 过时，仅作当时代快照保留。
+>
+> 2026-08-23 全量修复批次收尾，原「建议后续」处理结果：
+> - ~~Gateway CORS / snowflake / ListenOn 提交~~ → 均已在位（e2e 首轮三缺陷修复同批）；
+> - ~~schema 对齐 deploy/sql~~ → 本批新增 `deploy/sql/20260823_post_list_cursor_indexes.sql`
+>   并已对本地旧卷执行（幂等脚本，可重复跑）；
+> - ~~content-cleanup 消费组~~ → 已拆分运行正常。
 
-- 后端提交：Gateway CORS、interaction/media snowflake、本地 ListenOn 或 etcd 发布 IP 约定。
-- schema：旧卷迁移或文档写明必须对齐 `deploy/sql`。
-- Loki：已钉 3.7.6 并升到 v13/tsdb；不要改回 `latest`。
-- content-cleanup：可重置消费组或换 group 名后再启。
+## 2026-08-23 修复批次备忘
+
+### 后端（main: d067506）
+
+1. **Redis 密码变量名统一为 `REDIS_PASSWORD`**。旧 `${REDIS_PASS}` 已全部移除；
+   生产 overlay 不再双映射。`/tmp/xbh-dev.env` 两个名字都有，无需改；新环境只配
+   `REDIS_PASSWORD`。
+2. **snowflake 统一入口** `util.InitSnowflakeFromEnv(defaultWorker, defaultDC)`，
+   默认 user=0/content=1/interaction=3/media=4，多副本必须显式设
+   `SNOWFLAKE_WORKER_ID/DATACENTER_ID`。
+3. **帖子列表游标分页（破坏性契约）**：`GET /posts`、`GET /users/:userId/posts`
+   及 favorites 的响应统一 `{list,nextCursor}`，请求去掉 `page/total`，新增可选
+   `cursor`；坏游标返回 code=2。feed 降级 token 升 v2（携带各源内容游标，旧 token
+   直接失效回首页）。search/embedding rebuild 改按 nextCursor 走链。旧卷需执行
+   上面的索引迁移脚本。
+
+### 前端（main: e30539a）
+
+4. **传输层 print 泄漏已移除**（曾打印明文密码与双 token）；全局错误兜底、
+   `/post/new` 登录守卫、analyze 清零、comment/interaction 抽出 application 层。
+5. **token 存 localStorage 的风险与缓解**：CSP 由根仓反代下发（见下），
+   决策提案见前端仓 `docs/knowledge/proposals/PROP-token-storage-hardening.md`。
+6. **coverage 门禁**：`make test-coverage` 低于 `COVERAGE_MIN`（默认 70，当前
+   73.9%）即失败。
+
+### 根仓编排（main: b0e36f9）
+
+7. **CSP 已启用（enforcing）**：`location /` 下发 Flutter web 规范指令集。
+   资产审计确认入口仅同源资源 + picsum（mock 图）；headless chrome 无法驱动
+   DWDS 引导，**浏览器内人工回归仍待做**——若升级工具链后白屏，先把 header 改成
+   `Content-Security-Policy-Report-Only` 看 console 再收紧。
+8. **DevServer 收敛**：`prepare_etc` 会把 /tmp 配置副本里的 DevServer Host 一并改写为
+   `127.0.0.1`（子仓 yaml 不动），metrics/pprof 不再监听所有网卡。
+9. **compose 版本要求**：`middleware-up` 现在强制 docker compose ≥ 2.24
+   （`ports: !override` 语法需要）。
+
+### 测试覆盖面澄清
+
+embedding/inference 并非无测试：Python 侧 `app/embedding/service/test_server.py`、
+Go 侧 recommend 的 `inference_fault_injection_test.go`（真实 gRPC 故障注入）、
+`vectorstore/milvus_integration_test.go`（integration 标签，进 `make integration-*`）
+均在位；此前「零触达」只是根仓黑盒 e2e 的视角。
 
 ## 黑盒 e2e 首轮发现（2026-08-22）
 
