@@ -120,6 +120,15 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
     （症状：加载条消失后全白、脚本数异常）。验证渲染问题一律先硬刷新或 InPrivate
     窗口排除缓存。
 
+### 2026-08-25 引导链修复记录
+
+21'. **DDC 调试模式不适合作多访客入口**：web-server 设备下每个浏览器实例的 `main()`
+    都要等各自 DWDS RunRequest；本 SDK（3.44/dwds 26.2.5）该桥接对 VM service 的 WS
+    升级被 403 拒绝——访客白屏、附着即令 flutter 工具退出（make Error 1）。
+    chrome 设备（xvfb）只救活被附着的那个实例，其他访客同样卡门控。
+    结论：`:3002/:3003` 入口改伺服 release 静态包（serve_release.py，SPA 回退 +
+    wasm MIME），lib/ 变更由 app-up 自动重建。热载需求用 `make dev-real` 本机手动起。
+
 ## 建议后续
 
 > 2026-08-22 更新：联调编排已收敛到根仓 `justfile` + `deploy/dev/`。proxy.conf 已进仓库并

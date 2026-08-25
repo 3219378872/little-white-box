@@ -431,17 +431,15 @@ proxy_down() {
 frontend_up() {
   local pidfile="$PID_DIR/frontend.pid"
   local logfile="$LOG_DIR/frontend.log"
-  mkdir -p "$PID_DIR" "$LOG_DIR"
+  mkdir -p "$PID_DIR" "$LOG_DIR" "$RUN_DIR"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     echo "already running: frontend pid=$(cat "$pidfile")"
     return 0
   fi
-  echo "starting frontend on :$FRONT_PORT"
-  # CanvasKit base must reach the engine as a compile-time dart-define since
-  # Flutter 3.44 (String.fromEnvironment; process env no longer read). Serve
-  # SDK assets from the app origin via ensure_web_canvaskit; without them fall
-  # back to the engine-revision-pinned gstatic URL explicitly so the failure
-  # mode behind CSP stays visible instead of a silent relative-path 404.
+
+  # CanvasKit base reaches the release build as a compile-time dart-define;
+  # prefer same-origin assets (web/canvaskit -> SDK cache), fall back to the
+  # engine-revision-pinned gstatic URL when the SDK cache is unavailable.
   local canvaskit_url=""
   if ensure_web_canvaskit; then
     canvaskit_url="/canvaskit/"
@@ -454,23 +452,54 @@ frontend_up() {
       [[ -n "$rev" ]] && canvaskit_url="https://www.gstatic.com/flutter-canvaskit/${rev}/"
     fi
   fi
+
+  local bundle="$FRONTEND/build/web"
+  local needs_build=0
+  if [[ "${FORCE_FRONT_BUILD:-0}" == "1" || ! -f "$bundle/index.html" ]]; then
+    needs_build=1
+  elif ! front_bundle_fresh; then
+    needs_build=1
+  fi
+
+  if [[ "$needs_build" == "1" ]]; then
+    echo "building frontend (release)..."
+    if ! (
+      cd "$FRONTEND"
+      env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        -u ALL_PROXY -u all_proxy \
+        flutter build web --release -t lib/main.dart \
+        --no-web-resources-cdn \
+        --dart-define=FLUTTER_WEB_CANVASKIT_URL="${canvaskit_url:-/canvaskit/}"
+    ) >>"$logfile" 2>&1; then
+      if [[ -f "$bundle/index.html" ]]; then
+        echo "warning: frontend build failed, serving stale bundle" >&2
+      else
+        echo "frontend build failed and no bundle exists; see $logfile" >&2
+        return 1
+      fi
+    fi
+    touch "$RUN_DIR/front-build.stamp"
+  else
+    echo "frontend bundle up to date; set FORCE_FRONT_BUILD=1 to rebuild"
+  fi
+
+  echo "starting frontend on :$FRONT_PORT (static release bundle)"
   (
     cd "$FRONTEND"
-    # Proxy env vars break the DWDS debug websocket (RunRequest never reaches
-    # the browser -> blank page). The dev server only talks to localhost.
-    # DEVICE=chrome runs under Xvfb: with the web-server device, arbitrary
-    # visitors' boot is gated on a DWDS RunRequest that only arrives after a
-    # successful debug-connection bridge, which currently fails inside this
-    # SDK (VM-service WS upgrade answered 403) and killed the tool on attach.
-    # The chrome device drives debugging over CDP instead, so every visitor
-    # executes main() unconditionally.
-    setsid env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-      -u ALL_PROXY -u all_proxy \
-      xvfb-run -a make dev-real HOST=127.0.0.1 PORT="$FRONT_PORT" \
-      CANVASKIT_URL="$canvaskit_url" DEVICE=chrome \
-      >"$logfile" 2>&1 </dev/null &
+    setsid python3 "$ROOT/deploy/dev/serve_release.py" "$FRONT_PORT" "$bundle" \
+      >>"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
   )
+}
+
+# True when no tracked frontend source is newer than the last build stamp.
+front_bundle_fresh() {
+  local stamp="$RUN_DIR/front-build.stamp"
+  [[ -f "$stamp" ]] || return 1
+  local changed
+  changed="$(find "$FRONTEND/lib" "$FRONTEND/web" "$FRONTEND/pubspec.lock" \
+    -type f -newer "$stamp" -print -quit 2>/dev/null)"
+  [[ -z "$changed" ]]
 }
 
 app_up() {
