@@ -458,9 +458,16 @@ frontend_up() {
     cd "$FRONTEND"
     # Proxy env vars break the DWDS debug websocket (RunRequest never reaches
     # the browser -> blank page). The dev server only talks to localhost.
+    # DEVICE=chrome runs under Xvfb: with the web-server device, arbitrary
+    # visitors' boot is gated on a DWDS RunRequest that only arrives after a
+    # successful debug-connection bridge, which currently fails inside this
+    # SDK (VM-service WS upgrade answered 403) and killed the tool on attach.
+    # The chrome device drives debugging over CDP instead, so every visitor
+    # executes main() unconditionally.
     setsid env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
       -u ALL_PROXY -u all_proxy \
-      make dev-real HOST=127.0.0.1 PORT="$FRONT_PORT" CANVASKIT_URL="$canvaskit_url" \
+      xvfb-run -a make dev-real HOST=127.0.0.1 PORT="$FRONT_PORT" \
+      CANVASKIT_URL="$canvaskit_url" DEVICE=chrome \
       >"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
   )
