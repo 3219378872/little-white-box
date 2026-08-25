@@ -50,10 +50,11 @@
 ### 命令
 
 - `just up` / `just down`（alias `start` / `stop`）：全量起停 = `middleware-up` + `app-up`
-- `just restart`；`just status`：容器、反代、进程 pid 存活与关键端口探测
+- `just restart`；`just status`：容器、进程 pid 存活与关键端口探测
 - `just seed` = `seed-dev-user` + `seed-eval-corpus`，均可单独执行
 - 分步控制：`middleware-up/down` 只管 Docker 中间件（保留数据卷）；`app-up/down` 只管
-  本机进程与反代
+  本机进程与反代；`infer-up/down` 管可选算法服务（compose profile `algorithm`：
+  embedding-service + online-infer，首次启动需下载模型权重，未启动时推荐走规则降级）
 
 ### 运行时产物与数据
 

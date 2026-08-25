@@ -369,6 +369,22 @@ middleware_down() {
   docker stop "$PROXY_NAME" >/dev/null 2>&1 || true
 }
 
+# Opt-in algorithm services live behind the compose profile "algorithm" so
+# middleware-only stacks skip model downloads and inference ports. recommend-rpc
+# already dials 127.0.0.1:9025 (ONLINE_INFER_ENDPOINT); until these containers
+# are up it degrades to rule-based ranking.
+algorithm_up() {
+  require_compose_version
+  echo "starting algorithm containers (embedding-service, online-infer)"
+  COMPOSE_PROFILES=algorithm compose up -d
+  wait_port 127.0.0.1 9025 300 online-infer
+}
+
+algorithm_down() {
+  echo "stopping algorithm containers"
+  COMPOSE_PROFILES=algorithm compose stop online-infer embedding-service || true
+}
+
 # Local copy of the Flutter web engine assets (CanvasKit/Skwasm). Serving them
 # from the dev origin keeps browsers behind restrictive networks from needing
 # gstatic.com, which otherwise hangs engine init with a blank page.

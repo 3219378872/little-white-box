@@ -90,6 +90,23 @@ middleware-down:
     source "$ROOT/deploy/dev/stack.sh"
     middleware_down
 
+# 可选算法服务（embedding + 在线推理；首次启动需下载模型权重）
+infer-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    algorithm_up
+
+infer-down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    algorithm_down
+
 # 只起/停本机应用（RPC/MQ/Gateway/Flutter/反代）
 app-up:
     #!/usr/bin/env bash
