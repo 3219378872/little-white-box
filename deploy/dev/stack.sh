@@ -76,11 +76,13 @@ prepare_etc() {
   ) | while IFS= read -r -d '' rel; do
     mkdir -p "$ETC_DIR/$(dirname "$rel")"
     # Dev copies bind everything to loopback: RPC ListenOn (etcd registration
-    # must stay reachable from the host gateway) and the DevServer metrics/
-    # pprof HTTP endpoints, which would otherwise listen on all interfaces.
-    # Sub-repo yaml files are never modified.
+    # must stay reachable from the host gateway), the gateway REST listener
+    # (RestConf) and the DevServer metrics/pprof HTTP endpoints, which would
+    # otherwise listen on all interfaces. Sub-repo yaml files are never
+    # modified.
     sed -e 's/ListenOn: 0\.0\.0\.0:/ListenOn: 127.0.0.1:/' \
-        -e '/^DevServer:/,/^[^ ]/{s/^  Host: 0\.0\.0\.0/  Host: 127.0.0.1/}' \
+        -e '/^DevServer:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}' \
+        -e '/^RestConf:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}' \
         "$BACKEND/$rel" >"$ETC_DIR/$rel"
   done
 }
@@ -378,7 +380,7 @@ frontend_up() {
     # the browser -> blank page). The dev server only talks to localhost.
     setsid env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
       -u ALL_PROXY -u all_proxy FLUTTER_WEB_CANVASKIT_URL=/canvaskit/ \
-      make dev-real HOST=0.0.0.0 PORT="$FRONT_PORT" \
+      make dev-real HOST=127.0.0.1 PORT="$FRONT_PORT" \
       >"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
   )
