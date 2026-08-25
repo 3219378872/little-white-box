@@ -68,6 +68,10 @@
 - `middleware-up` 每次对后端仓 `deploy/sql/patches/*.sql` 做幂等重放（补丁必须自幂等，
   约定见该目录 README）；基线 schema 仅空卷初始化时经 initdb.d 生效。
 - 重启机器后 `/tmp` 产物与反代容器消失，重新 `just up` 即可。
+- CanvasKit 由前端 dev server 从 `<front>/web/canvaskit/`（编排层符号链接到 SDK 缓存，
+  随升级自动跟随）同源提供，经 `--dart-define` 注入；SDK 缺失时回退 gstatic 并打警告。
+- CanvasKit 由前端 dev server 从 `<front>/web/canvaskit/`（编排层符号链接到 SDK 缓存，
+  随升级自动跟随）同源提供，经 `--dart-define` 注入；SDK 缺失时回退 gstatic 并打警告。
 - 易变踩坑细节一律看 [NOTES.md](NOTES.md)，本文件只维护上述稳定事实。
 
 ## 根仓库修改与提交流程

@@ -390,19 +390,25 @@ algorithm_down() {
   COMPOSE_PROFILES=algorithm compose stop online-infer embedding-service || true
 }
 
-# Local copy of the Flutter web engine assets (CanvasKit/Skwasm). Serving them
-# from the dev origin keeps browsers behind restrictive networks from needing
-# gstatic.com, which otherwise hangs engine init with a blank page.
-resolve_canvaskit_dir() {
-  if [[ -z "$CANVASKIT_DIR" ]]; then
-    local fl sdk
-    fl="$(command -v flutter 2>/dev/null || true)"
-    if [[ -n "$fl" && -f "$fl" ]]; then
-      sdk="$(cd "$(dirname "$(readlink -f "$fl")")/.." && pwd)"
-      CANVASKIT_DIR="$sdk/bin/cache/flutter_web_sdk/canvaskit"
-    fi
+# Local Flutter web engine assets (CanvasKit/Skwasm). Since Flutter 3.44 the
+# engine reads its base URL from a compile-time dart-define only, so the dev
+# server must serve the assets itself: symlink the SDK cache into the app's
+# web/ dir and pass --dart-define=FLUTTER_WEB_CANVASKIT_URL=/canvaskit/.
+# The link re-points on every app-up, following SDK upgrades automatically.
+ensure_web_canvaskit() {
+  local fl sdk src dst
+  fl="$(command -v flutter 2>/dev/null || true)"
+  [[ -n "$fl" ]] || return 1
+  sdk="$(cd "$(dirname "$(readlink -f "$fl")")/.." && pwd)"
+  src="$sdk/bin/cache/flutter_web_sdk/canvaskit"
+  [[ -d "$src" ]] || return 1
+  dst="$FRONTEND/web/canvaskit"
+  mkdir -p "$FRONTEND/web"
+  if [[ "$(readlink -f "$dst" 2>/dev/null)" != "$src" ]]; then
+    rm -f "$dst"
+    ln -s "$src" "$dst"
   fi
-  [[ -n "$CANVASKIT_DIR" && -d "$CANVASKIT_DIR" ]]
+  [[ -e "$dst/canvaskit.js" ]]
 }
 
 proxy_up() {
@@ -410,14 +416,7 @@ proxy_up() {
     docker rm -f "$PROXY_NAME" >/dev/null
   fi
   echo "starting $PROXY_NAME on :$ENTRY_PORT"
-  local mounts=()
-  if resolve_canvaskit_dir; then
-    mounts+=(-v "$CANVASKIT_DIR:/var/www/canvaskit:ro")
-  else
-    echo "warning: flutter_web_sdk canvaskit dir not found, /canvaskit/ disabled" >&2
-  fi
   docker run -d --name "$PROXY_NAME" --network host --restart unless-stopped \
-    "${mounts[@]}" \
     -v "$PROXY_CONF:/etc/nginx/nginx.conf:ro" \
     nginx:stable-alpine >/dev/null
 }
@@ -438,22 +437,30 @@ frontend_up() {
     return 0
   fi
   echo "starting frontend on :$FRONT_PORT"
-  # CanvasKit is served from the local SDK via the proxy mount; only pin the
-  # engine URL when that mount exists, otherwise the engine would request a
-  # missing /canvaskit/ and blank-screen instead of falling back to gstatic.
-  local canvaskit_env=()
-  if resolve_canvaskit_dir; then
-    canvaskit_env=(FLUTTER_WEB_CANVASKIT_URL=/canvaskit/)
+  # CanvasKit base must reach the engine as a compile-time dart-define since
+  # Flutter 3.44 (String.fromEnvironment; process env no longer read). Serve
+  # SDK assets from the app origin via ensure_web_canvaskit; without them fall
+  # back to the engine-revision-pinned gstatic URL explicitly so the failure
+  # mode behind CSP stays visible instead of a silent relative-path 404.
+  local canvaskit_url=""
+  if ensure_web_canvaskit; then
+    canvaskit_url="/canvaskit/"
   else
-    echo "warning: flutter_web_sdk canvaskit dir not found, engine falls back to gstatic" >&2
+    echo "warning: flutter_web_sdk canvaskit dir not found, using gstatic fallback" >&2
+    local rev stamp
+    stamp="$(dirname "$(readlink -f "$(command -v flutter 2>/dev/null)" 2>/dev/null)/../bin/cache/engine_stamp.json" 2>/dev/null)"
+    if [[ -f "$stamp" ]]; then
+      rev="$(sed -n 's/.*"git_revision": *"\([^"]*\)".*/\1/p' "$stamp" | head -n1)"
+      [[ -n "$rev" ]] && canvaskit_url="https://www.gstatic.com/flutter-canvaskit/${rev}/"
+    fi
   fi
   (
     cd "$FRONTEND"
     # Proxy env vars break the DWDS debug websocket (RunRequest never reaches
     # the browser -> blank page). The dev server only talks to localhost.
     setsid env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-      -u ALL_PROXY -u all_proxy "${canvaskit_env[@]}" \
-      make dev-real HOST=127.0.0.1 PORT="$FRONT_PORT" \
+      -u ALL_PROXY -u all_proxy \
+      make dev-real HOST=127.0.0.1 PORT="$FRONT_PORT" CANVASKIT_URL="$canvaskit_url" \
       >"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
   )
