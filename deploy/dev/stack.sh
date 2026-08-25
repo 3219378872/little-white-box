@@ -126,7 +126,7 @@ wait_http() {
   local url="$1" seconds="${2:-90}" label="${3:-$url}"
   local i code
   for ((i = 0; i < seconds; i++)); do
-    code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 2 "$url" || echo 000)"
+    code="$(http_code "$url")"
     if [[ "$code" == "200" ]]; then
       echo "ready: $label"
       return 0
@@ -137,8 +137,13 @@ wait_http() {
   return 1
 }
 
+# Single capture: curl failures (timeout, refused) must yield exactly "000",
+# not "000\n000" from a fallback echo racing with -w output.
 http_code() {
-  curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "$1" || echo "000"
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "$1" 2>/dev/null || true)"
+  [[ -n "$code" ]] || code="000"
+  printf '%s' "$code"
 }
 
 wait_topics() {
@@ -364,9 +369,9 @@ middleware_up() {
 }
 
 middleware_down() {
+  # Containers only; the :3002 proxy is app-layer and belongs to proxy_down.
   echo "stopping middleware containers (volumes kept)"
   compose stop
-  docker stop "$PROXY_NAME" >/dev/null 2>&1 || true
 }
 
 # Opt-in algorithm services live behind the compose profile "algorithm" so
@@ -433,12 +438,21 @@ frontend_up() {
     return 0
   fi
   echo "starting frontend on :$FRONT_PORT"
+  # CanvasKit is served from the local SDK via the proxy mount; only pin the
+  # engine URL when that mount exists, otherwise the engine would request a
+  # missing /canvaskit/ and blank-screen instead of falling back to gstatic.
+  local canvaskit_env=()
+  if resolve_canvaskit_dir; then
+    canvaskit_env=(FLUTTER_WEB_CANVASKIT_URL=/canvaskit/)
+  else
+    echo "warning: flutter_web_sdk canvaskit dir not found, engine falls back to gstatic" >&2
+  fi
   (
     cd "$FRONTEND"
     # Proxy env vars break the DWDS debug websocket (RunRequest never reaches
     # the browser -> blank page). The dev server only talks to localhost.
     setsid env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-      -u ALL_PROXY -u all_proxy FLUTTER_WEB_CANVASKIT_URL=/canvaskit/ \
+      -u ALL_PROXY -u all_proxy "${canvaskit_env[@]}" \
       make dev-real HOST=127.0.0.1 PORT="$FRONT_PORT" \
       >"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"

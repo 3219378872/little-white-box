@@ -175,7 +175,7 @@ Go 侧 recommend 的 `inference_fault_injection_test.go`（真实 gRPC 故障注
 
 ## 黑盒 e2e 首轮发现（2026-08-22）
 
-> 来源：`deploy/dev/e2e/` 套件（105 用例）对真实联调栈的首轮运行与契约核对。
+> 来源：`deploy/dev/e2e/` 套件（首轮 105 用例，现收集 107 项）对真实联调栈的首轮运行与契约核对。
 > 三项缺陷已于当日修复（后端仓 main：81afe21 / 749eccb / 4ee5875，均推送 origin），
 > e2e 断言已同步校准（根仓 1d1e1a8），全量 105 passed。
 

@@ -3,18 +3,9 @@
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
+# 路径、端口、容器名的默认值集中在 stack.sh 文件头，可用环境变量覆盖；
+# 这里只保留 recipe 插值需要的根目录。
 root := justfile_directory()
-backend := root / "little-white-box-content-community"
-frontend := root / "little-white-box-front"
-run_dir := "/tmp/xbh-run"
-etc_dir := "/tmp/xbh-etc"
-env_file := "/tmp/xbh-dev.env"
-local_env := root / "deploy/dev/.env"
-proxy_name := "xbh-dev-proxy"
-proxy_conf := root / "deploy/dev/proxy.conf"
-front_port := "3003"
-gateway_port := "8888"
-entry_port := "3002"
 
 default:
     @just --list
