@@ -207,6 +207,26 @@ FLUSH PRIVILEGES;
 SQL
 }
 
+# Replay the backend's idempotent schema patches (deploy/sql/patches/) against
+# the current MySQL volume. initdb.d only runs on an empty volume and no
+# longer carries these files, so existing volumes would otherwise never pick
+# them up. Every patch must be self-idempotent (see deploy/sql/README.md).
+apply_sql_patches() {
+  local dir="$BACKEND/deploy/sql/patches"
+  [[ -d "$dir" ]] || return 0
+  shopt -s nullglob
+  local patches=("$dir"/*.sql)
+  shopt -u nullglob
+  if [[ ${#patches[@]} -eq 0 ]]; then
+    return 0
+  fi
+  echo "applying ${#patches[@]} idempotent sql patch(es)"
+  local sql
+  for sql in "${patches[@]}"; do
+    mysql_root <"$sql"
+  done
+}
+
 # Load frozen eval/corpus.json (ids 1001-1300) and optional bulk
 # backend eval/dev/corpus_2000.json (ids 2001-4000) into xbh_content.post.
 # utf8mb4 is required; latin1 CLI charset double-encodes Chinese.
@@ -329,6 +349,7 @@ middleware_up() {
   wait_port 127.0.0.1 3306 90 mysql
   apply_dev_user
   apply_e2e_db_grants
+  apply_sql_patches
   apply_eval_corpus
   wait_port 127.0.0.1 6379 60 redis
   wait_port 127.0.0.1 2379 60 etcd

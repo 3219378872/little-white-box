@@ -63,6 +63,8 @@
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
   可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
   （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
+- `middleware-up` 每次对后端仓 `deploy/sql/patches/*.sql` 做幂等重放（补丁必须自幂等，
+  约定见该目录 README）；基线 schema 仅空卷初始化时经 initdb.d 生效。
 - 重启机器后 `/tmp` 产物与反代容器消失，重新 `just up` 即可。
 - 易变踩坑细节一律看 [NOTES.md](NOTES.md)，本文件只维护上述稳定事实。
 
