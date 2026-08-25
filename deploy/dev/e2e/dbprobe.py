@@ -9,6 +9,11 @@ MYSQL_PASSWORD = os.environ.get("E2E_MYSQL_PASSWORD", "xbhdev")
 
 _READ_PREFIXES = ("SELECT", "SHOW", "EXPLAIN", "WITH", "DESCRIBE", "DESC")
 
+# Substrings that mean the account itself is missing or rejected (e.g. the
+# read-only e2e account was never seeded). Tests skip on DbUnavailable, so
+# credential problems must not surface as generic RuntimeError failures.
+_DB_AUTH_MARKERS = ("access denied", "error 1045", "error 1410", "error 1698")
+
 
 class DbUnavailable(RuntimeError):
     pass
@@ -34,7 +39,13 @@ def _exec(container, argv, sql):
         ["docker", "exec", "-i", container, *argv],
         input=sql, capture_output=True, text=True, timeout=30)
     if proc.returncode != 0:
-        raise RuntimeError(f"{container}: {proc.stderr.strip()[:300]}")
+        stderr = proc.stderr.strip()[:300]
+        lowered = stderr.lower()
+        if any(marker in lowered for marker in _DB_AUTH_MARKERS):
+            raise DbUnavailable(
+                f"{container}: database account rejected (seeded by "
+                f"middleware-up apply_e2e_db_grants): {stderr[:160]}")
+        raise RuntimeError(f"{container}: {stderr}")
     return proc.stdout.strip()
 
 

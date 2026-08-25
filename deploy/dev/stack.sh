@@ -186,6 +186,27 @@ apply_dev_user() {
   mysql_root <"$sql"
 }
 
+# The black-box e2e suite probes MySQL rows through a dedicated read-only
+# account (deploy/dev/e2e/dbprobe.py). Nothing in the schema SQL creates it,
+# so seed it here on every middleware-up; ALTER USER keeps an already-seeded
+# volume self-healing. Values must be single-quote-safe.
+apply_e2e_db_grants() {
+  local user="${E2E_MYSQL_USER:-xbh}"
+  local pass="${E2E_MYSQL_PASSWORD:-xbhdev}"
+  echo "seeding e2e read-only db account ${user}"
+  mysql_root <<SQL
+CREATE USER IF NOT EXISTS '${user}'@'%';
+ALTER USER '${user}'@'%' IDENTIFIED BY '${pass}';
+GRANT SELECT ON xbh_content.* TO '${user}'@'%';
+GRANT SELECT ON xbh_user.* TO '${user}'@'%';
+GRANT SELECT ON xbh_interaction.* TO '${user}'@'%';
+GRANT SELECT ON xbh_media.* TO '${user}'@'%';
+GRANT SELECT ON xbh_message.* TO '${user}'@'%';
+GRANT SELECT ON xbh_feed.* TO '${user}'@'%';
+FLUSH PRIVILEGES;
+SQL
+}
+
 # Load frozen eval/corpus.json (ids 1001-1300) and optional bulk
 # backend eval/dev/corpus_2000.json (ids 2001-4000) into xbh_content.post.
 # utf8mb4 is required; latin1 CLI charset double-encodes Chinese.
@@ -307,6 +328,7 @@ middleware_up() {
   compose up -d
   wait_port 127.0.0.1 3306 90 mysql
   apply_dev_user
+  apply_e2e_db_grants
   apply_eval_corpus
   wait_port 127.0.0.1 6379 60 redis
   wait_port 127.0.0.1 2379 60 etcd
