@@ -92,7 +92,9 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 18. **nginx `location /` 必须用 `$http_host` 而不是 `$host`**（2026-08-22）  
     `$host` 会剥掉端口；DWDS 按 Host 头拼调试回调 URL，拿到无端口地址后
     WebSocket 握手失败 → webdev 启动链路中断 → Dart `main()` 永不执行 →
-    白屏且控制台无报错。改用 `$http_host` 保留客户端原始 host:port。
+    白屏且控制台无报错。改用 `$http_host` 保留客户端原始 host:port。  
+    （2026-08-25：proxy.conf 收编时曾把该修复遗漏成 `$host`，已在跟踪版恢复，
+    四个 proxy location 统一 `$http_host`。）
 
 19. **机器级 http_proxy 会劫持 DWDS 调试信道导致白屏**（2026-08-22）  
     本机全局代理指向 `172.18.0.1:17897` 时，flutter 工具内 DWDS 建立调试

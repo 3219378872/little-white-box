@@ -57,8 +57,9 @@
 
 ### 运行时产物与数据
 
-- 进程 pid 与日志在 `/tmp/xbh-run/{pids,logs}`；RPC 配置覆盖副本在 `/tmp/xbh-etc`
-  （复制仓库 yaml 并把 `ListenOn: 0.0.0.0:` 改写为 `127.0.0.1:`，不改子仓原文件）。
+- 进程 pid 与日志在 `/tmp/xbh-run/{pids,logs}`；服务配置覆盖副本在 `/tmp/xbh-etc`
+  （复制仓库 yaml，把 RPC `ListenOn`、网关 `RestConf` 与各服务 `DevServer` 的
+  `Host: 0.0.0.0` 改写为回环地址，不改子仓原文件）。
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
   可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
   （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
