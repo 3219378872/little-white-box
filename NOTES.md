@@ -256,14 +256,36 @@ Go 侧 recommend 的 `inference_fault_injection_test.go`（真实 gRPC 故障注
 - agent chat 在模型不可用时降级为 `LLM_UNAVAILABLE` 错误帧（AGNT-061），与会话/
   配额语义一致。
 
-### 已知现场问题（非本次引入）
+### LLM 配置已切换（2026-08-26 晚）
 
-- `/tmp/xbh-dev.env` 里的 `ASSISTANT_LLM_API_KEY` 对 opencode.ai zen 返回
-  401 Invalid API key：enhanced_search（chat_logic 单轮管线）与 agent Runner
-  **同时**受影响，日志分别为 `assistant LLM failed status=401` /
-  `agent model call failed ... 401`。两条管线行为一致降级；换有效 key 后无需改代码。
-- openai-go Runner 的 URL 规范化已验证正确：endpoint 含 `/v1/chat/completions`
-  时正确还原 base=`.../v1` 再拼回 `/chat/completions`。
+`/tmp/xbh-dev.env` 的 ASSISTANT_LLM_* 已从失效的 opencode.ai zen（401）切到
+本机 codex 网关（~/.codex mine provider / sub2api）：
+
+```text
+ASSISTANT_LLM_ENABLED=true
+ASSISTANT_LLM_WIRE_API=chat_completions
+ASSISTANT_LLM_ENDPOINT=http://ubuntu:3081/v1/chat/completions
+ASSISTANT_LLM_MODEL=deepseek-v4-flash
+```
+
+key 取自环境变量 `MINE_API_KEY`（值已写入 env 文件）。openai-go Runner 的
+URL 规范化验证正确：endpoint 含 `/v1/chat/completions` 时还原 base=`.../v1`
+再拼回 `/chat/completions`。
+
+### Agent 五工具真实模型观测（deepseek-v4-flash）
+
+- search_posts：TOOL_CALL 进度帧 → Search RPC → 回答带 [post:id] 强制引用 +
+  SOURCE 帧。
+- create_post：直接发布成功（status=1），幂等键派生正常。
+- update_post：先 search_posts 定位再 PATCH，revision 1→2。
+- delete_post：CONFIRM_REQUIRED(callId) → REST tool/confirm approved → 流恢复
+  DONE → 帖子 status=2、搜索不可见；凭据一次性生效。
+- web_search 未配置 Tavily key 时按设计剔除（AGNT-010）。
+- 软上限通知注入的是发给模型的工具结果内容，不出现在 SSE 流（单测覆盖注入逻辑；
+  现场观测到 10 连搜索在硬限内自然收敛）。
+
+e2e 全量 **111 passed**（含 4 个 agent 用例）；曾出现 verify-code IP 小时频控
+(20/h) 误报失败，清 `verify:send:cnt:*` 计数即恢复，非缺陷。
 
 ### 待办
 
