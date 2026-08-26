@@ -59,3 +59,67 @@ def test_overlong_message_rejected_locally(user):
     frames = parse_sse_stream(resp)
     error_frames = [f for f in frames if f["type"] == "error"]
     assert error_frames, f"expected local rejection frame, got {[f['type'] for f in frames]}"
+
+
+def _sse_error_code(frames):
+    error_frames = [f for f in frames if f.get("type") == "error"]
+    return error_frames[0].get("errorCode") if error_frames else None
+
+
+def test_agent_endpoints_require_auth(anon):
+    assert_error(anon.get_agent_consent(), 401, 1006)
+    assert_error(anon.set_agent_consent(True), 401, 1006)
+
+
+def test_agent_mode_gate_and_revoke(user):
+    client = user.client
+
+    granted = client.get_agent_consent()
+    assert granted.status_code == 200
+    original = granted.json().get("granted")
+
+    def cleanup():
+        client.set_agent_consent(False)
+
+    try:
+        # 未授权：agent 请求被网关结构化拒绝（AGNT-002）。
+        if not original:
+            resp = client.assistant_chat("hello", stream=True, mode="agent",
+                                         request_id="e2e-agent-gate")
+            frames = parse_sse_stream(resp)
+            assert _sse_error_code(frames) == "AGENT_NOT_AUTHORIZED"
+
+        # 授权后：不再返回授权错误（模型不可用时按 AGNT-061 结构化降级）。
+        r = client.set_agent_consent(True)
+        assert r.status_code == 200
+        assert client.get_agent_consent().json()["granted"] is True
+        resp = client.assistant_chat("hello", stream=True, mode="agent",
+                                     request_id="e2e-agent-granted")
+        frames = parse_sse_stream(resp)
+        code = _sse_error_code(frames)
+        assert code != "AGENT_NOT_AUTHORIZED", f"unexpected auth error: {frames}"
+
+        # 撤销后立即拒绝（AGNT-006）。
+        r = client.set_agent_consent(False)
+        assert r.status_code == 200
+        resp = client.assistant_chat("hello", stream=True, mode="agent",
+                                     request_id="e2e-agent-revoked")
+        frames = parse_sse_stream(resp)
+        assert _sse_error_code(frames) == "AGENT_NOT_AUTHORIZED"
+    finally:
+        cleanup()
+
+
+def test_tool_confirm_rejects_unknown_call(user):
+    client = user.client
+    r = client.confirm_assistant_tool("e2e-request", "no-such-call", True)
+    assert r.status_code == 400
+
+
+def test_enhanced_search_default_unchanged(user):
+    resp = user.client.assistant_chat("用一句话介绍这个社区", stream=True,
+                                      request_id="e2e-enhanced-default")
+    frames = parse_sse_stream(resp)
+    assert frames, "enhanced_search produced no frames"
+    codes = {f.get("errorCode") for f in frames if f.get("type") == "error"}
+    assert "AGENT_NOT_AUTHORIZED" not in codes

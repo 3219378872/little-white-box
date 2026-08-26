@@ -56,13 +56,13 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
    ClickHouse `daily_aggregates` 同样不会随旧卷自动出现；`just up` 会把 `xbh_analytics.sql` 再执行一遍（`CREATE IF NOT EXISTS`）。
 
 9. **SeaweedFS 健康检查 unhealthy，S3 可用**（2026-08-22 已修复）
-   根因：容器内 `localhost` 同时解析到 `127.0.0.1` 和 `::1`，busybox wget 走 IPv6 的 `::1`，而 SeaweedFS 只监听 IPv4（无 tcp6），故 `wget localhost:9333` Connection refused；服务本身一直正常（上传原图/缩略图 HTTP 200）。修法：探针 URL 改为 `http://127.0.0.1:9333/cluster/status`，已改入后端 `deploy/docker-compose.middleware.yml` 并重建容器转 healthy。
+    根因：容器内 `localhost` 同时解析到 `127.0.0.1` 和 `::1`，busybox wget 走 IPv6 的 `::1`，而 SeaweedFS 只监听 IPv4（无 tcp6），故 `wget localhost:9333` Connection refused；服务本身一直正常（上传原图/缩略图 HTTP 200）。修法：探针 URL 改为 `http://127.0.0.1:9333/cluster/status`，已改入后端 `deploy/docker-compose.middleware.yml` 并重建容器转 healthy。
 
 10. **Loki 曾因 `latest` + v11/boltdb-shipper 起不来**  
-    已钉 `grafana/loki:3.7.6`，配置改为 v13/tsdb，并补 `compactor.delete_request_store`。本地 `just up` 会等 `:3100`。
+     已钉 `grafana/loki:3.7.6`，配置改为 v13/tsdb，并补 `compactor.delete_request_store`。本地 `just up` 会等 `:3100`。
 
 11. **端口冲突**  
-    Grafana 默认 3000 与前端冲突（已映到 33000）。SeaweedFS 8080 与 `sub2api` 冲突（已映到 18080）。3000/3001 本机另有进程。
+     Grafana 默认 3000 与前端冲突（已映到 33000）。SeaweedFS 8080 与 `sub2api` 冲突（已映到 18080）。3000/3001 本机另有进程。
 
 ### 产品与契约（不一定是 bug）
 
@@ -231,3 +231,42 @@ Go 侧 recommend 的 `inference_fault_injection_test.go`（真实 gRPC 故障注
 
 - assistant 外部 LLM（opencode.ai zen）经本机代理间歇可达：不可达时段流内返回
   error 帧（degraded），可达时正常出 token；套件仅在「无 token 帧」时 skip。
+
+## Assistant Agent 模式上线备忘（2026-08-26）
+
+后端 main `58076ed`、前端 main `7fbe553`（均推送 origin）；正式知识链见后端
+`SPEC-assistant-agent-mode`（AGNT-*）与前端 FX-052～058。
+
+### 新增环境变量（`/tmp/xbh-dev.env`）
+
+- `ASSISTANT_AGENT_ENABLED=true`：assistant.yaml 的 `${ASSISTANT_AGENT_ENABLED}`
+  是必填占位，**该变量缺失会让 assistant-rpc 启动直接失败**；不想开就填 `false`。
+- `TAVILY_API_KEY=`：留空则 web_search 工具从工具表剔除（AGNT-010），其余四工具
+  正常；要联网搜索需填有效 key。
+- assistant-rpc 新增 etcd 依赖键 `media.rpc`（MediaRpc），etcd 里由 media-rpc 注册。
+
+### 已在现场验证（真实栈 :3002）
+
+- consent 往返：初始 false → 授权 POST → granted:true（含 grantedAt 毫秒时间戳）；
+  撤销后 agent chat 立即返回结构化 `AGENT_NOT_AUTHORIZED` 错误帧（AGNT-002/006）。
+- `POST /api/v2/assistant/tool/confirm`：缺字段 400；未知 callId 400（凭据一次性，
+  AGNT-022）。
+- enhanced_search 缺省回归正常（e2e 110 passed, 1 skipped，新增 4 个 agent 用例：
+  `test_assistant.py::test_agent_*`）。
+- agent chat 在模型不可用时降级为 `LLM_UNAVAILABLE` 错误帧（AGNT-061），与会话/
+  配额语义一致。
+
+### 已知现场问题（非本次引入）
+
+- `/tmp/xbh-dev.env` 里的 `ASSISTANT_LLM_API_KEY` 对 opencode.ai zen 返回
+  401 Invalid API key：enhanced_search（chat_logic 单轮管线）与 agent Runner
+  **同时**受影响，日志分别为 `assistant LLM failed status=401` /
+  `agent model call failed ... 401`。两条管线行为一致降级；换有效 key 后无需改代码。
+- openai-go Runner 的 URL 规范化已验证正确：endpoint 含 `/v1/chat/completions`
+  时正确还原 base=`.../v1` 再拼回 `/chat/completions`。
+
+### 待办
+
+- Tavily key 与 LLM key 补充后：agent 五工具全链路（含 delete 确认回环、软/硬步数
+  预算）尚无真模型观测；前端 EVD-assistant-agent-mode-2026-08-26 仍是 partial，
+  待补真实网关证据后升 verified。

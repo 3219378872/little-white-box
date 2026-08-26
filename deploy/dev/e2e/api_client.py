@@ -211,13 +211,32 @@ class ApiClient:
     def unread_summary(self):
         return self.get("/api/v2/messages/unread")
 
-    def assistant_chat(self, message, stream=False, conversation_id=None):
+    def assistant_chat(self, message, stream=False, conversation_id=None,
+                       mode=None, attachments=None, request_id=None):
         payload = {"message": message}
         if conversation_id is not None:
             payload["conversationId"] = conversation_id
+        if mode is not None:
+            payload["mode"] = mode
+        if request_id is not None:
+            payload["requestId"] = request_id
+        if attachments:
+            payload["attachments"] = attachments
         headers = {"Accept": "text/event-stream"}
         return self.post("/api/v2/assistant/chat", json=payload, stream=stream,
                          headers=headers)
+
+    def get_agent_consent(self):
+        return self.get("/api/v2/assistant/consent")
+
+    def set_agent_consent(self, granted):
+        return self.post("/api/v2/assistant/consent",
+                         json={"granted": bool(granted)})
+
+    def confirm_assistant_tool(self, request_id, call_id, approved):
+        return self.post("/api/v2/assistant/tool/confirm",
+                         json={"requestId": request_id, "callId": call_id,
+                               "approved": bool(approved)})
 
     def assistant_chat_stream(self, message, attempts=3):
         last = None
