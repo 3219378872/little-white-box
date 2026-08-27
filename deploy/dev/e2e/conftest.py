@@ -2,7 +2,7 @@ import base64
 
 import pytest
 
-from api_client import ApiClient
+from api_client import ApiClient, cleanup_created_posts
 from support import (ADMIN_PASSWORD, ADMIN_USERNAME, BASE_URL, DEFAULT_PASSWORD,
                      RUN_ID, User)
 
@@ -10,6 +10,13 @@ from support import (ADMIN_PASSWORD, ADMIN_USERNAME, BASE_URL, DEFAULT_PASSWORD,
 @pytest.fixture(scope="session")
 def base_url():
     return BASE_URL
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_run_posts():
+    yield
+    failures = cleanup_created_posts()
+    assert not failures, "e2e post cleanup failed: " + "; ".join(failures)
 
 
 @pytest.fixture(scope="session")

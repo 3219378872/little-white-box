@@ -39,6 +39,7 @@ seed-dev-user:
     ROOT="{{root}}"
     # shellcheck source=/dev/null
     source "$ROOT/deploy/dev/stack.sh"
+    load_env
     apply_dev_user
 
 # 把后端 eval/corpus.json 与 eval/dev/corpus_2000.json 灌入 xbh_content.post（幂等）
@@ -48,6 +49,7 @@ seed-eval-corpus:
     ROOT="{{root}}"
     # shellcheck source=/dev/null
     source "$ROOT/deploy/dev/stack.sh"
+    load_env
     apply_eval_corpus
 
 # 测试账号 + eval 语料
@@ -62,7 +64,11 @@ e2e *args="":
     source "$ROOT/deploy/dev/stack.sh"
     load_env >/dev/null 2>&1 || true
     export PYTHONDONTWRITEBYTECODE=1
-    exec python3 -m pytest -v {{args}} "$ROOT/deploy/dev/e2e"
+    set -- {{args}}
+    if [[ "$#" -eq 0 ]]; then
+        set -- "$ROOT/deploy/dev/e2e"
+    fi
+    exec python3 -m pytest -v "$@"
 
 # 只起/停 Docker 中间件
 middleware-up:

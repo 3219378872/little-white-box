@@ -33,7 +33,12 @@ class ReleaseHandler(http.server.SimpleHTTPRequestHandler):
         path = self.translate_path(self.path)
         rel = os.path.relpath(path, self.directory)
         top = rel.split(os.sep)[0] if os.sep in rel or "." in rel else rel
-        if rel.endswith(NO_CACHE_TYPES) or not os.path.exists(path):
+        request_path = self.path.split("?", 1)[0]
+        if (
+            request_path in {"", "/"}
+            or rel.endswith(NO_CACHE_TYPES)
+            or not os.path.exists(path)
+        ):
             self.send_header("Cache-Control", "no-cache")
         elif top == "canvaskit":
             self.send_header("Cache-Control", "max-age=3600")

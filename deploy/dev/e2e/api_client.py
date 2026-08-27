@@ -5,6 +5,26 @@ import uuid
 import requests
 
 
+_created_posts = {}
+
+
+def cleanup_created_posts():
+    failures = []
+    for post_id, client in reversed(list(_created_posts.values())):
+        detail = client.post_detail(post_id)
+        if detail.status_code == 404:
+            continue
+        if detail.status_code != 200:
+            failures.append(f"detail {post_id}: HTTP {detail.status_code}")
+            continue
+        revision = detail.json().get("revision", 0)
+        deleted = client.delete_post(post_id, revision)
+        if deleted.status_code not in {200, 404, 410}:
+            failures.append(f"delete {post_id}: HTTP {deleted.status_code}")
+    _created_posts.clear()
+    return failures
+
+
 def parse_sse_stream(resp, max_frames=1000):
     frames = []
     buf = b""
@@ -133,7 +153,12 @@ class ApiClient:
         return self.get(f"/api/v1/post/{post_id}")
 
     def create_post(self, payload):
-        return self.post("/api/v2/post", json=payload)
+        resp = self.post("/api/v2/post", json=payload)
+        if resp.status_code == 200:
+            post_id = resp.json().get("postId")
+            if post_id:
+                _created_posts[str(post_id)] = (post_id, self)
+        return resp
 
     def update_post(self, post_id, payload):
         return self.put(f"/api/v2/post/{post_id}", json=payload)

@@ -362,6 +362,7 @@ all_app_names() {
 }
 
 middleware_up() {
+  load_env
   require_compose_version
   echo "starting middleware containers"
   compose up -d
@@ -393,6 +394,7 @@ middleware_down() {
 # already dials 127.0.0.1:9025 (ONLINE_INFER_ENDPOINT); until these containers
 # are up it degrades to rule-based ranking.
 algorithm_up() {
+  load_env
   require_compose_version
   echo "starting algorithm containers (embedding-service, online-infer)"
   COMPOSE_PROFILES=algorithm compose up -d
@@ -459,8 +461,13 @@ frontend_up() {
     canvaskit_url="/canvaskit/"
   else
     echo "warning: flutter_web_sdk canvaskit dir not found, using gstatic fallback" >&2
-    local rev stamp
-    stamp="$(dirname "$(readlink -f "$(command -v flutter 2>/dev/null)" 2>/dev/null)/../bin/cache/engine_stamp.json" 2>/dev/null)"
+    local fl sdk rev stamp
+    fl="$(command -v flutter 2>/dev/null || true)"
+    sdk=""
+    if [[ -n "$fl" ]]; then
+      sdk="$(cd "$(dirname "$(readlink -f "$fl")")/.." 2>/dev/null && pwd || true)"
+    fi
+    stamp="$sdk/bin/cache/engine_stamp.json"
     if [[ -f "$stamp" ]]; then
       rev="$(sed -n 's/.*"git_revision": *"\([^"]*\)".*/\1/p' "$stamp" | head -n1)"
       [[ -n "$rev" ]] && canvaskit_url="https://www.gstatic.com/flutter-canvaskit/${rev}/"
@@ -487,12 +494,14 @@ frontend_up() {
     ) >>"$logfile" 2>&1; then
       if [[ -f "$bundle/index.html" ]]; then
         echo "warning: frontend build failed, serving stale bundle" >&2
+        rm -f "$RUN_DIR/front-build.stamp"
       else
         echo "frontend build failed and no bundle exists; see $logfile" >&2
         return 1
       fi
+    else
+      touch "$RUN_DIR/front-build.stamp"
     fi
-    touch "$RUN_DIR/front-build.stamp"
   else
     echo "frontend bundle up to date; set FORCE_FRONT_BUILD=1 to rebuild"
   fi
@@ -510,8 +519,9 @@ frontend_up() {
 front_bundle_fresh() {
   local stamp="$RUN_DIR/front-build.stamp"
   [[ -f "$stamp" ]] || return 1
-  local changed
-  changed="$(find "$FRONTEND/lib" "$FRONTEND/web" "$FRONTEND/pubspec.lock" \
+  local changed roots=("$FRONTEND/lib" "$FRONTEND/web" "$FRONTEND/pubspec.yaml" "$FRONTEND/pubspec.lock")
+  [[ -d "$FRONTEND/assets" ]] && roots+=("$FRONTEND/assets")
+  changed="$(find "${roots[@]}" \
     -type f -newer "$stamp" -print -quit 2>/dev/null)"
   [[ -z "$changed" ]]
 }
