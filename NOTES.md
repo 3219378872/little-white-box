@@ -301,5 +301,6 @@ e2e 全量 **111 passed**（含 4 个 agent 用例）；曾出现 verify-code IP
 - `xbh_assistant` 由后端补丁 `20260827_assistant_runtime.sql` 创建；
   `middleware-up` 在 patches 之后对该库 `GRANT ALL` 给应用账号（旧卷否则只有
   其他 xbh_* 的权限，memory/watch 写会 503）。
-- Watch matcher 消费者仍未接线；hits e2e 只覆盖 REST 空收件箱，不覆盖 MQ
-  驱动命中。
+- Watch matcher 进程名 `assistant-watch`（`app/assistant/mq`），`just app-up`
+  随 MQ_SERVICES 拉起；订阅 `post-*`，命中写入 `xbh_assistant.watch_hit`。
+  `discussion_spike` 仍未消费行为事件。

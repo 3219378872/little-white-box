@@ -1,6 +1,7 @@
 import pytest
 
 from api_client import assert_error, error_of, parse_sse_stream
+from poll import eventually
 
 _ASSISTANT_DB_HINT = (
     "DB_ASSISTANT/schema is required (derive from DB_CONTENT; replay "
@@ -241,6 +242,38 @@ def test_watch_hits_list_empty_inbox(user):
     assert listed.status_code == 200, listed.text[:200]
     body = listed.json()
     assert isinstance(body.get("hits"), list)
+
+
+def test_watch_matcher_records_author_new_post(user, published_post):
+    client = user.client
+    payload = {
+        "conditionType": "author_new_post",
+        "targetType": "author",
+        "targetId": user.id,
+    }
+    created = client.create_assistant_watch(payload)
+    _assert_assistant_store_ok(created, "POST /assistant/watch matcher")
+    assert created.status_code == 200, created.text[:200]
+    task_id = created.json().get("task", {}).get("id")
+    assert isinstance(task_id, int) and task_id > 0
+    try:
+        post = published_post(client)
+
+        def hit_for_new_post():
+            listed = client.list_assistant_watch_hits()
+            _assert_assistant_store_ok(listed, "GET /assistant/watch/hits matcher")
+            if listed.status_code != 200:
+                return False
+            return any(
+                item.get("postId") == post["postId"]
+                and item.get("taskId") == task_id
+                for item in listed.json().get("hits") or []
+            )
+
+        eventually(hit_for_new_post, desc="watch hit for author_new_post",
+                   timeout=60.0, interval=1.0)
+    finally:
+        client.delete_assistant_watch(task_id)
 
 
 def test_recommend_feedback_never_500(user, published_post):
