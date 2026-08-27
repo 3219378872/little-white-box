@@ -68,6 +68,14 @@ load_env() {
   set +a
 }
 
+# assistant.yaml DataSource is "${DB_ASSISTANT}". Older env files only set
+# DB_CONTENT; derive the DSN by swapping the schema name, keep user/query.
+ensure_assistant_db_env() {
+  if [[ -z "${DB_ASSISTANT:-}" && -n "${DB_CONTENT:-}" ]]; then
+    export DB_ASSISTANT="${DB_CONTENT/xbh_content/xbh_assistant}"
+  fi
+}
+
 prepare_etc() {
   mkdir -p "$ETC_DIR"
   (
@@ -195,10 +203,13 @@ apply_dev_user() {
 # account (deploy/dev/e2e/dbprobe.py). Nothing in the schema SQL creates it,
 # so seed it here on every middleware-up; ALTER USER keeps an already-seeded
 # volume self-healing. Values must be single-quote-safe.
+# The same default account (xbh) is the app DSN user: it already has ALL on
+# the other xbh_* schemas from init, but xbh_assistant landed later and
+# needs ALL so assistant-rpc can write memory/watch.
 apply_e2e_db_grants() {
   local user="${E2E_MYSQL_USER:-xbh}"
   local pass="${E2E_MYSQL_PASSWORD:-xbhdev}"
-  echo "seeding e2e read-only db account ${user}"
+  echo "seeding e2e db account ${user}"
   mysql_root <<SQL
 CREATE USER IF NOT EXISTS '${user}'@'%';
 ALTER USER '${user}'@'%' IDENTIFIED BY '${pass}';
@@ -208,6 +219,8 @@ GRANT SELECT ON xbh_interaction.* TO '${user}'@'%';
 GRANT SELECT ON xbh_media.* TO '${user}'@'%';
 GRANT SELECT ON xbh_message.* TO '${user}'@'%';
 GRANT SELECT ON xbh_feed.* TO '${user}'@'%';
+CREATE DATABASE IF NOT EXISTS xbh_assistant DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+GRANT ALL PRIVILEGES ON xbh_assistant.* TO '${user}'@'%';
 FLUSH PRIVILEGES;
 SQL
 }
@@ -353,8 +366,8 @@ middleware_up() {
   compose up -d
   wait_port 127.0.0.1 3306 90 mysql
   apply_dev_user
-  apply_e2e_db_grants
   apply_sql_patches
+  apply_e2e_db_grants
   apply_eval_corpus
   wait_port 127.0.0.1 6379 60 redis
   wait_port 127.0.0.1 2379 60 etcd
@@ -504,6 +517,7 @@ front_bundle_fresh() {
 
 app_up() {
   load_env
+  ensure_assistant_db_env
   prepare_etc
   mkdir -p "$PID_DIR" "$LOG_DIR"
   local row

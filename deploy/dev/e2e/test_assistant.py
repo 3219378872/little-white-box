@@ -1,6 +1,20 @@
 import pytest
 
-from api_client import assert_error, parse_sse_stream
+from api_client import assert_error, error_of, parse_sse_stream
+
+_ASSISTANT_DB_HINT = (
+    "DB_ASSISTANT/schema is required (derive from DB_CONTENT; replay "
+    "patches + GRANT ALL on xbh_assistant)"
+)
+
+
+def _assert_assistant_store_ok(resp, action):
+    assert resp.status_code != 503, (
+        f"{action} returned HTTP 503; {_ASSISTANT_DB_HINT}; "
+        f"body={resp.text[:200]}")
+    assert resp.status_code != 500, (
+        f"{action} returned HTTP 500; {_ASSISTANT_DB_HINT}; "
+        f"body={resp.text[:200]}")
 
 
 def _open_stream_or_skip(client, message, attempts=4):
@@ -69,6 +83,30 @@ def _sse_error_code(frames):
 def test_agent_endpoints_require_auth(anon):
     assert_error(anon.get_agent_consent(), 401, 1006)
     assert_error(anon.set_agent_consent(True), 401, 1006)
+    assert_error(anon.list_assistant_memory(), 401, 1006)
+    assert_error(anon.update_assistant_memory(1, value="rpg"), 401, 1006)
+    assert_error(anon.delete_assistant_memory(1), 401, 1006)
+    assert_error(anon.list_assistant_watch(), 401, 1006)
+    assert_error(anon.create_assistant_watch({
+        "conditionType": "author_new_post",
+        "targetType": "author",
+        "targetId": 1,
+    }), 401, 1006)
+    assert_error(anon.update_assistant_watch(1, False), 401, 1006)
+    assert_error(anon.delete_assistant_watch(1), 401, 1006)
+    assert_error(anon.list_assistant_watch_hits(), 401, 1006)
+    assert_error(anon.mark_assistant_watch_hits_read([1]), 401, 1006)
+    assert_error(anon.submit_assistant_recommend_feedback(1, "dislike"),
+                 401, 1006)
+
+
+def test_consent_includes_version_fields(user):
+    r = user.client.get_agent_consent()
+    assert r.status_code == 200, r.text[:200]
+    body = r.json()
+    assert isinstance(body.get("consentVersion"), int)
+    assert isinstance(body.get("currentVersion"), int)
+    assert body["currentVersion"] == 2
 
 
 def test_agent_mode_gate_and_revoke(user):
@@ -123,3 +161,96 @@ def test_enhanced_search_default_unchanged(user):
     assert frames, "enhanced_search produced no frames"
     codes = {f.get("errorCode") for f in frames if f.get("type") == "error"}
     assert "AGENT_NOT_AUTHORIZED" not in codes
+
+
+def test_memory_list_after_consent(user):
+    client = user.client
+    r = client.set_agent_consent(True)
+    assert r.status_code == 200, r.text[:200]
+    try:
+        listed = client.list_assistant_memory()
+        _assert_assistant_store_ok(listed, "GET /assistant/memory")
+        assert listed.status_code == 200, listed.text[:200]
+        body = listed.json()
+        assert isinstance(body.get("items"), list)
+    finally:
+        client.set_agent_consent(False)
+
+
+def test_watch_crud_and_unknown_condition(user, published_post):
+    client = user.client
+    post = published_post(user.client)
+    detail = client.post_detail(post["postId"])
+    assert detail.status_code == 200, detail.text[:200]
+    author_id = detail.json()["authorId"]
+    payload = {
+        "conditionType": "author_new_post",
+        "targetType": "author",
+        "targetId": author_id,
+    }
+    created = client.create_assistant_watch(payload)
+    _assert_assistant_store_ok(created, "POST /assistant/watch")
+    assert created.status_code == 200, created.text[:200]
+    task = created.json().get("task") or {}
+    task_id = task.get("id")
+    assert isinstance(task_id, int) and task_id > 0
+
+    try:
+        listed = client.list_assistant_watch()
+        _assert_assistant_store_ok(listed, "GET /assistant/watch")
+        assert listed.status_code == 200, listed.text[:200]
+        tasks = listed.json().get("tasks")
+        assert isinstance(tasks, list)
+        assert any(item.get("id") == task_id for item in tasks)
+
+        dup = client.create_assistant_watch(payload)
+        _assert_assistant_store_ok(dup, "POST /assistant/watch duplicate")
+        assert 400 <= dup.status_code < 500, (
+            f"duplicate watch must be conflict/error not 500: "
+            f"{dup.status_code} {dup.text[:200]}")
+
+        patched = client.update_assistant_watch(task_id, False)
+        _assert_assistant_store_ok(patched, "PATCH /assistant/watch")
+        assert patched.status_code == 200, patched.text[:200]
+        after = client.list_assistant_watch().json().get("tasks") or []
+        found = next(item for item in after if item.get("id") == task_id)
+        assert found.get("enabled") is False
+
+        unknown = client.create_assistant_watch({
+            "conditionType": "price_drop",
+            "targetType": "post",
+            "targetId": post["postId"],
+        })
+        _assert_assistant_store_ok(unknown, "POST /assistant/watch unknown")
+        assert 400 <= unknown.status_code < 500, (
+            f"unknown conditionType must be 4xx, got {unknown.status_code}: "
+            f"{unknown.text[:200]}")
+    finally:
+        deleted = client.delete_assistant_watch(task_id)
+        _assert_assistant_store_ok(deleted, "DELETE /assistant/watch")
+        assert deleted.status_code == 200, deleted.text[:200]
+        remaining = client.list_assistant_watch()
+        assert remaining.status_code == 200, remaining.text[:200]
+        assert all(item.get("id") != task_id
+                   for item in remaining.json().get("tasks") or [])
+
+
+def test_watch_hits_list_empty_inbox(user):
+    listed = user.client.list_assistant_watch_hits()
+    _assert_assistant_store_ok(listed, "GET /assistant/watch/hits")
+    assert listed.status_code == 200, listed.text[:200]
+    body = listed.json()
+    assert isinstance(body.get("hits"), list)
+
+
+def test_recommend_feedback_never_500(user, published_post):
+    post = published_post(user.client)
+    r = user.client.submit_assistant_recommend_feedback(
+        post["postId"], "dislike")
+    _assert_assistant_store_ok(r, "POST /assistant/recommend/feedback")
+    assert r.status_code != 500, (
+        f"valid dislike feedback must not 500: {r.text[:200]}")
+    if r.status_code != 200:
+        assert error_of(r) is not None, (
+            f"expected 200 or structured error, got HTTP {r.status_code}: "
+            f"{r.text[:200]}")

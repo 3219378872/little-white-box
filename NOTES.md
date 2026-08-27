@@ -292,3 +292,14 @@ e2e 全量 **111 passed**（含 4 个 agent 用例）；曾出现 verify-code IP
 - Tavily key 与 LLM key 补充后：agent 五工具全链路（含 delete 确认回环、软/硬步数
   预算）尚无真模型观测；前端 EVD-assistant-agent-mode-2026-08-26 仍是 partial，
   待补真实网关证据后升 verified。
+
+## Assistant 权威库与 Watch REST（2026-08-27）
+
+- `DB_ASSISTANT` 缺省时由 `app-up` 从 `DB_CONTENT` 把 schema 名 `xbh_content`
+  换成 `xbh_assistant`（凭证与查询串不变）；DSN 只在 `/tmp/xbh-dev.env` 或
+  `deploy/dev/.env`，不入库。
+- `xbh_assistant` 由后端补丁 `20260827_assistant_runtime.sql` 创建；
+  `middleware-up` 在 patches 之后对该库 `GRANT ALL` 给应用账号（旧卷否则只有
+  其他 xbh_* 的权限，memory/watch 写会 503）。
+- Watch matcher 消费者仍未接线；hits e2e 只覆盖 REST 空收件箱，不覆盖 MQ
+  驱动命中。

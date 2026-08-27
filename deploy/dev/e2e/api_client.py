@@ -76,6 +76,9 @@ class ApiClient:
     def put(self, path, **kw):
         return self.request("PUT", path, **kw)
 
+    def patch(self, path, **kw):
+        return self.request("PATCH", path, **kw)
+
     def delete(self, path, **kw):
         return self.request("DELETE", path, **kw)
 
@@ -212,7 +215,8 @@ class ApiClient:
         return self.get("/api/v2/messages/unread")
 
     def assistant_chat(self, message, stream=False, conversation_id=None,
-                       mode=None, attachments=None, request_id=None):
+                       mode=None, attachments=None, request_id=None,
+                       context_post_id=None):
         payload = {"message": message}
         if conversation_id is not None:
             payload["conversationId"] = conversation_id
@@ -222,6 +226,8 @@ class ApiClient:
             payload["requestId"] = request_id
         if attachments:
             payload["attachments"] = attachments
+        if context_post_id is not None:
+            payload["contextPostId"] = context_post_id
         headers = {"Accept": "text/event-stream"}
         return self.post("/api/v2/assistant/chat", json=payload, stream=stream,
                          headers=headers)
@@ -237,6 +243,48 @@ class ApiClient:
         return self.post("/api/v2/assistant/tool/confirm",
                          json={"requestId": request_id, "callId": call_id,
                                "approved": bool(approved)})
+
+    def list_assistant_memory(self, layer=None):
+        params = {}
+        if layer is not None:
+            params["layer"] = layer
+        return self.get("/api/v2/assistant/memory", params=params or None)
+
+    def update_assistant_memory(self, memory_id, **body):
+        return self.patch(f"/api/v2/assistant/memory/{memory_id}", json=body)
+
+    def delete_assistant_memory(self, memory_id):
+        return self.delete(f"/api/v2/assistant/memory/{memory_id}")
+
+    def list_assistant_watch(self):
+        return self.get("/api/v2/assistant/watch")
+
+    def create_assistant_watch(self, payload):
+        return self.post("/api/v2/assistant/watch", json=payload)
+
+    def update_assistant_watch(self, watch_id, enabled):
+        return self.patch(f"/api/v2/assistant/watch/{watch_id}",
+                          json={"enabled": bool(enabled)})
+
+    def delete_assistant_watch(self, watch_id):
+        return self.delete(f"/api/v2/assistant/watch/{watch_id}")
+
+    def list_assistant_watch_hits(self, unread_only=None):
+        params = {}
+        if unread_only is not None:
+            params["unreadOnly"] = unread_only
+        return self.get("/api/v2/assistant/watch/hits", params=params or None)
+
+    def mark_assistant_watch_hits_read(self, hit_ids):
+        return self.post("/api/v2/assistant/watch/hits/read",
+                         json={"hitIds": list(hit_ids)})
+
+    def submit_assistant_recommend_feedback(self, post_id, reason,
+                                            request_id=None):
+        payload = {"postId": post_id, "reason": reason}
+        if request_id is not None:
+            payload["requestId"] = request_id
+        return self.post("/api/v2/assistant/recommend/feedback", json=payload)
 
     def assistant_chat_stream(self, message, attempts=3):
         last = None
