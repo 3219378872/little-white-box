@@ -59,7 +59,8 @@
 
 ### 运行时产物与数据
 
-- 进程 pid 与日志在 `/tmp/xbh-run/{pids,logs}`；服务配置覆盖副本在 `/tmp/xbh-etc`
+- 进程二进制、pid 与日志在 `/tmp/xbh-run/{bin,pids,logs}`；pidfile 指向直接执行的服务二进制，
+  服务配置覆盖副本在 `/tmp/xbh-etc`
   （复制仓库 yaml，把 RPC `ListenOn`、网关 `RestConf` 与各服务 `DevServer` 的
   `Host: 0.0.0.0` 改写为回环地址，不改子仓原文件）。
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，

@@ -304,17 +304,30 @@ start_svc() {
   shift 3
   local pidfile="$PID_DIR/$name.pid"
   local logfile="$LOG_DIR/$name.log"
-  mkdir -p "$PID_DIR" "$LOG_DIR"
+  local bindir="$RUN_DIR/bin"
+  local executable="$bindir/$name"
+  mkdir -p "$PID_DIR" "$LOG_DIR" "$bindir"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     echo "already running: $name pid=$(cat "$pidfile")"
     return 0
   fi
+  echo "building $name"
+  (
+    cd "$workdir"
+    go build -o "$executable.tmp" "$bin"
+  ) >>"$logfile" 2>&1
+  mv -f "$executable.tmp" "$executable"
   echo "starting $name"
   (
     cd "$workdir"
-    setsid go run "$bin" "$@" >"$logfile" 2>&1 </dev/null &
+    setsid "$executable" "$@" >"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
   )
+  sleep 0.1
+  if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    echo "$name exited during startup; see $logfile" >&2
+    return 1
+  fi
 }
 
 start_row() {
@@ -325,13 +338,15 @@ start_row() {
 
 stop_tree() {
   local pid="$1"
-  if ! kill -0 "$pid" 2>/dev/null; then
+  if ! kill -0 "$pid" 2>/dev/null && ! kill -0 -- "-$pid" 2>/dev/null; then
     return 0
   fi
   kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    kill -0 "$pid" 2>/dev/null || return 0
+    if ! kill -0 "$pid" 2>/dev/null && ! kill -0 -- "-$pid" 2>/dev/null; then
+      return 0
+    fi
     sleep 0.2
   done
   kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
