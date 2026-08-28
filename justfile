@@ -65,8 +65,14 @@ e2e *args="":
     load_env >/dev/null 2>&1 || true
     export PYTHONDONTWRITEBYTECODE=1
     set -- {{args}}
-    if [[ "$#" -eq 0 ]]; then
-        set -- "$ROOT/deploy/dev/e2e"
+    has_selection=0
+    for arg in "$@"; do
+        case "$arg" in
+            *.py|*.py::*|*::*|*/e2e|*/e2e/) has_selection=1 ;;
+        esac
+    done
+    if [[ "$has_selection" -eq 0 ]]; then
+        set -- "$@" "$ROOT/deploy/dev/e2e"
     fi
     exec python3 -m pytest -v "$@"
 
