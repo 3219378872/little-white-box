@@ -304,3 +304,15 @@ e2e 全量 **111 passed**（含 4 个 agent 用例）；曾出现 verify-code IP
 - Watch matcher 进程名 `assistant-watch`（`app/assistant/mq`），`just app-up`
   随 MQ_SERVICES 拉起；订阅 `post-*`，命中写入 `xbh_assistant.watch_hit`。
   `discussion_spike` 仍未消费行为事件。
+
+## Hermes 异步 Agent（2026-08-29）
+
+- 补丁 `20260829_assistant_runtime_v3.sql` 首次执行会清空 `xbh_assistant` 并
+  写入 `runtime_marker.assistant_runtime_v3`；同时清空 `agent_capability_consent`。
+  重复 `middleware-up` 不再清库。
+- `assistant-rpc` 只接受命令/读模型；模型循环在 `assistant-agent`
+  （`app/assistant/worker`，Prometheus `:9136`）。`app-up` 会删 Redis
+  `assistant:v2*` 旧会话键。
+- 对外契约：`POST /api/v2/assistant/messages` 立即返回 `runId`+`disposition`，
+  `GET /api/v2/assistant/runs/:id/events` SSE。已删除 `/assistant/chat`、`mode`
+  和 Watch hits。前端入口是消息页置顶虚拟线程，不再有独立 Assistant Tab。
