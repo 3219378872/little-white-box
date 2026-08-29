@@ -256,21 +256,25 @@ Go 侧 recommend 的 `inference_fault_injection_test.go`（真实 gRPC 故障注
 - agent chat 在模型不可用时降级为 `LLM_UNAVAILABLE` 错误帧（AGNT-061），与会话/
   配额语义一致。
 
-### LLM 配置已切换（2026-08-26 晚）
+### LLM 配置（mine 网关，模型 `glm-5.3-flash`）
 
-`/tmp/xbh-dev.env` 的 ASSISTANT_LLM_* 已从失效的 opencode.ai zen（401）切到
-本机 codex 网关（~/.codex mine provider / sub2api）：
+`/tmp/xbh-dev.env` 的 ASSISTANT_LLM_* 走 Codex mine 网关
+（`base_url=http://ubuntu:3081/v1`，`wire_api=responses`，`env_key=MINE_API_KEY`）。
+Codex `mine.config.toml` 默认模型是 `gpt-5.6-sol`；本栈按现场要求改用
+`glm-5.3-flash`：
 
 ```text
 ASSISTANT_LLM_ENABLED=true
-ASSISTANT_LLM_WIRE_API=chat_completions
-ASSISTANT_LLM_ENDPOINT=http://ubuntu:3081/v1/chat/completions
-ASSISTANT_LLM_MODEL=deepseek-v4-flash
+ASSISTANT_LLM_WIRE_API=responses
+ASSISTANT_LLM_ENDPOINT=http://ubuntu:3081/v1
+ASSISTANT_LLM_MODEL=glm-5.3-flash
 ```
 
-key 取自环境变量 `MINE_API_KEY`（值已写入 env 文件）。openai-go Runner 的
-URL 规范化验证正确：endpoint 含 `/v1/chat/completions` 时还原 base=`.../v1`
-再拼回 `/chat/completions`。
+key 与 `MINE_API_KEY` 相同。GLM 上游会对 Go 默认 UA/签名 403 后进入
+cooldown（mine 表现为 502 `Upstream access forbidden` / 503）；worker
+`edface4` 带浏览器 `User-Agent` + `OpenAI-Beta: responses=v1`，并把
+`status=incomplete` 且已有正文/工具调用当成功。assistant 历史必须是
+`output_text`（`3ac025a`）。2026-08-29 现场 SSE `run_started`/`token`/`done`。
 
 ### Agent 五工具真实模型观测（deepseek-v4-flash）
 
