@@ -113,13 +113,19 @@ def test_full_community_journey(anon, make_user, png_bytes):
                     in behavior.json()["results"] if res["accepted"]]
     assert len(accepted_ids) == 2
 
-    chat = reader.client.assistant_chat_stream(f"帖子 {title} 讲了什么")
-    if chat.status_code == 200:
-        frames = parse_sse_stream(chat)
-        types = [f["type"] for f in frames]
-        assert types, "assistant stream produced no frames"
-        if types[-1] == "done":
-            assert "token" in types
+    reader.client.set_agent_consent(True)
+    posted = reader.client.post_assistant_message(
+        f"帖子 {title} 讲了什么", request_id=unique_key("asst"))
+    if posted.status_code == 200:
+        run_id = posted.json().get("runId")
+        if isinstance(run_id, int) and run_id > 0:
+            events = reader.client.assistant_run_events(run_id)
+            if events.status_code == 200:
+                frames = parse_sse_stream(events)
+                types = [f["type"] for f in frames]
+                assert types, "assistant stream produced no frames"
+                if types[-1] == "done":
+                    assert "token" in types or "run_started" in types
 
     update = author.client.update_post(
         post_id, {"title": f"{title} v2", "content": f"journey content {marker} updated",

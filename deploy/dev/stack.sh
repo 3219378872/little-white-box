@@ -41,6 +41,7 @@ MQ_SERVICES=(
   "behavior-log|$BACKEND|./app/pipeline/behaviorlog|-f|$ETC_DIR/app/pipeline/behaviorlog/etc/behavior-log.yaml"
   "content-cleanup|$BACKEND|./app/content/mq/cleanup|-f|$ETC_DIR/app/content/mq/cleanup/etc/content-cleanup.yaml"
   "assistant-watch|$BACKEND|./app/assistant/mq|-f|$ETC_DIR/app/assistant/mq/etc/watch-consumer.yaml"
+  "assistant-agent|$BACKEND|./app/assistant/worker|-f|$ETC_DIR/app/assistant/worker/etc/agent.yaml"
 )
 
 compose() {
@@ -74,6 +75,29 @@ load_env() {
 ensure_assistant_db_env() {
   if [[ -z "${DB_ASSISTANT:-}" && -n "${DB_CONTENT:-}" ]]; then
     export DB_ASSISTANT="${DB_CONTENT/xbh_content/xbh_assistant}"
+  fi
+}
+
+# Old sync Assistant stored Redis sessions under assistant:v2*. The v3 runtime
+# only uses Redis for run-event notify keys, so wiping the legacy namespace on
+# every app-up is idempotent and does not touch the MySQL marker.
+wipe_legacy_assistant_redis() {
+  local host pass
+  host="${REDIS_HOST:-127.0.0.1:6379}"
+  host="${host%%,*}"
+  host="${host#redis://}"
+  pass="${REDIS_PASSWORD:-}"
+  if ! command -v redis-cli >/dev/null 2>&1; then
+    echo "redis-cli missing; skip legacy assistant key wipe"
+    return 0
+  fi
+  echo "wiping legacy assistant redis namespace assistant:v2*"
+  if [[ -n "$pass" ]]; then
+    redis-cli -u "redis://:${pass}@${host}" --scan --pattern 'assistant:v2*' \
+      | xargs -r redis-cli -u "redis://:${pass}@${host}" del >/dev/null 2>&1 || true
+  else
+    redis-cli -h "${host%:*}" -p "${host##*:}" --scan --pattern 'assistant:v2*' \
+      | xargs -r redis-cli -h "${host%:*}" -p "${host##*:}" del >/dev/null 2>&1 || true
   fi
 }
 
@@ -560,6 +584,7 @@ app_up() {
   proxy_up
   wait_port 127.0.0.1 "$GATEWAY_PORT" 240 gateway
   wait_port 127.0.0.1 "$FRONT_PORT" 240 frontend
+  wipe_legacy_assistant_redis
   maybe_rebuild_search
   echo "entry http://127.0.0.1:$ENTRY_PORT/  (page=$(http_code "http://127.0.0.1:$ENTRY_PORT/") api=$(http_code "http://127.0.0.1:$ENTRY_PORT/api/v1/"))"
 }
@@ -615,4 +640,5 @@ stack_status() {
   printf ':%s gw     %s\n' "$GATEWAY_PORT" "$(http_code "http://127.0.0.1:$GATEWAY_PORT/")"
   printf ':%s front  %s\n' "$FRONT_PORT" "$(http_code "http://127.0.0.1:$FRONT_PORT/")"
   printf ':3100 loki  %s\n' "$(http_code "http://127.0.0.1:3100/ready")"
+  printf ':9136 agent %s\n' "$(http_code "http://127.0.0.1:9136/metrics")"
 }

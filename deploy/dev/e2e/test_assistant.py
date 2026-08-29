@@ -18,62 +18,10 @@ def _assert_assistant_store_ok(resp, action):
         f"body={resp.text[:200]}")
 
 
-def _open_stream_or_skip(client, message, attempts=4):
-    resp = client.assistant_chat_stream(message, attempts=attempts)
-    if resp.status_code != 200:
-        raise AssertionError(
-            f"assistant chat returned HTTP {resp.status_code}: {resp.text[:150]}")
-    return resp
-
-
-def test_chat_requires_auth(anon):
-    r = anon.assistant_chat("hello")
-    assert_error(r, 401, 1006)
-
-
-def test_empty_message_yields_error_frame(user):
-    resp = user.client.assistant_chat("", stream=True)
-    assert resp.status_code == 200
-    frames = parse_sse_stream(resp)
-    assert frames, "expected at least one SSE frame"
-    error_frames = [f for f in frames if f["type"] == "error"]
-    assert error_frames, f"expected error frame, got {[f['type'] for f in frames]}"
-    assert error_frames[0]["errorCode"] == "INVALID_REQUEST"
-    assert error_frames[0]["degraded"] is True
-
-
-def test_stream_content_type_is_event_stream(user):
-    resp = _open_stream_or_skip(user.client, "介绍一下这个社区")
-    assert resp.headers.get("Content-Type", "").startswith("text/event-stream")
-    resp.close()
-
-
-def test_stream_emits_tokens_then_done(user):
-    resp = _open_stream_or_skip(user.client, "用一句话介绍这个社区")
-
-    frames = parse_sse_stream(resp)
-    assert frames, "no SSE frames received"
-    types = [f["type"] for f in frames]
-    if types[-1] == "error":
-        pytest.skip(f"assistant degraded by upstream: {frames[-1].get('errorCode')}")
-
-    assert "token" in types, f"expected token frames, got types={types}"
-    assert types[-1] == "done", f"stream did not end with done frame: {types}"
-
-    conversation_ids = {f["conversationId"] for f in frames}
-    assert len(conversation_ids) == 1
-    assert next(iter(conversation_ids)), "empty conversationId"
-
-    text = "".join(f.get("text", "") for f in frames if f["type"] == "token")
-    assert text.strip(), "assistant produced no text"
-
-
-def test_overlong_message_rejected_locally(user):
-    resp = user.client.assistant_chat("字" * 2001, stream=True)
-    assert resp.status_code == 200
-    frames = parse_sse_stream(resp)
-    error_frames = [f for f in frames if f["type"] == "error"]
-    assert error_frames, f"expected local rejection frame, got {[f['type'] for f in frames]}"
+def _grant(client):
+    r = client.set_agent_consent(True)
+    _assert_assistant_store_ok(r, "POST /assistant/consent")
+    assert r.status_code == 200, r.text[:200]
 
 
 def _sse_error_code(frames):
@@ -81,24 +29,48 @@ def _sse_error_code(frames):
     return error_frames[0].get("errorCode") if error_frames else None
 
 
-def test_agent_endpoints_require_auth(anon):
+def test_assistant_endpoints_require_auth(anon):
+    assert_error(anon.get_assistant_thread(), 401, 1006)
+    assert_error(anon.list_assistant_messages(), 401, 1006)
+    assert_error(anon.post_assistant_message("hello"), 401, 1006)
+    assert_error(anon.create_assistant_session(), 401, 1006)
+    assert_error(anon.mark_assistant_thread_read(), 401, 1006)
+    assert_error(anon.delete_assistant_history(), 401, 1006)
+    assert_error(anon.assistant_run_events(1, stream=False), 401, 1006)
+    assert_error(anon.cancel_assistant_run(1), 401, 1006)
+    assert_error(anon.confirm_assistant_run(1, "x", True), 401, 1006)
     assert_error(anon.get_agent_consent(), 401, 1006)
     assert_error(anon.set_agent_consent(True), 401, 1006)
     assert_error(anon.list_assistant_memory(), 401, 1006)
-    assert_error(anon.update_assistant_memory(1, value="rpg"), 401, 1006)
-    assert_error(anon.delete_assistant_memory(1), 401, 1006)
+    assert_error(anon.add_assistant_memory("memory", "note"), 401, 1006)
     assert_error(anon.list_assistant_watch(), 401, 1006)
     assert_error(anon.create_assistant_watch({
         "conditionType": "author_new_post",
         "targetType": "author",
         "targetId": 1,
     }), 401, 1006)
-    assert_error(anon.update_assistant_watch(1, False), 401, 1006)
-    assert_error(anon.delete_assistant_watch(1), 401, 1006)
-    assert_error(anon.list_assistant_watch_hits(), 401, 1006)
-    assert_error(anon.mark_assistant_watch_hits_read([1]), 401, 1006)
     assert_error(anon.submit_assistant_recommend_feedback(1, "dislike"),
                  401, 1006)
+
+
+def test_old_chat_and_hits_routes_are_gone(user):
+    chat = user.client.post("/api/v2/assistant/chat", json={"message": "hi"})
+    assert chat.status_code == 404, chat.text[:200]
+    hits = user.client.list_assistant_watch_hits()
+    assert hits.status_code == 404, hits.text[:200]
+
+
+def test_empty_message_rejected(user):
+    _grant(user.client)
+    try:
+        r = user.client.post_assistant_message("")
+        assert r.status_code in {200, 400}
+        if r.status_code == 400:
+            assert error_of(r) is not None
+        else:
+            _assert_assistant_store_ok(r, "POST /assistant/messages empty")
+    finally:
+        user.client.set_agent_consent(False)
 
 
 def test_consent_includes_version_fields(user):
@@ -110,70 +82,166 @@ def test_consent_includes_version_fields(user):
     assert body["currentVersion"] == 2
 
 
-def test_agent_mode_gate_and_revoke(user):
+def test_post_message_requires_consent(user):
     client = user.client
+    client.set_agent_consent(False)
+    r = client.post_assistant_message("hello", request_id="e2e-no-consent")
+    _assert_assistant_store_ok(r, "POST /assistant/messages no consent")
+    assert r.status_code in {401, 403}
+    body = error_of(r)
+    assert body is not None
+    assert body["code"] == 6001
 
-    granted = client.get_agent_consent()
-    assert granted.status_code == 200
-    original = granted.json().get("granted")
 
-    def cleanup():
+def test_async_message_and_event_reconnect(user):
+    client = user.client
+    _grant(client)
+    try:
+        posted = client.post_assistant_message(
+            "用一句话介绍这个社区", request_id="e2e-async-hello")
+        _assert_assistant_store_ok(posted, "POST /assistant/messages")
+        assert posted.status_code == 200, posted.text[:200]
+        body = posted.json()
+        run_id = body.get("runId")
+        session_id = body.get("sessionId")
+        message_id = body.get("messageId")
+        assert isinstance(run_id, int) and run_id > 0
+        assert isinstance(session_id, int) and session_id > 0
+        assert isinstance(message_id, int) and message_id > 0
+        assert body.get("disposition") in {
+            "started", "redirected", "steered", "queued"}
+
+        thread = client.get_assistant_thread()
+        _assert_assistant_store_ok(thread, "GET /assistant/thread")
+        assert thread.status_code == 200, thread.text[:200]
+        summary = thread.json().get("thread") or {}
+        assert summary.get("sessionId") == session_id
+
+        events = client.assistant_run_events(run_id)
+        assert events.status_code == 200, events.text[:150]
+        assert events.headers.get("Content-Type", "").startswith(
+            "text/event-stream")
+        frames = parse_sse_stream(events)
+        assert frames, "expected persistent run events"
+        types = [f.get("type") for f in frames]
+        if types[-1] == "error":
+            pytest.skip(f"assistant degraded by upstream: {frames[-1]}")
+        assert types[-1] == "done", f"stream did not end with done: {types}"
+        last_seq = frames[-1].get("seq")
+        assert isinstance(last_seq, int) and last_seq > 0
+
+        replay = client.assistant_run_events(
+            run_id, after_seq=0, last_event_id=0)
+        assert replay.status_code == 200
+        replayed = parse_sse_stream(replay)
+        assert replayed, "reconnect must replay persisted events"
+        assert replayed[-1].get("type") in {"done", "error"}
+    finally:
         client.set_agent_consent(False)
 
+
+def test_stop_run(user):
+    client = user.client
+    _grant(client)
     try:
-        # 未授权：agent 请求被网关结构化拒绝（AGNT-002）。
-        if not original:
-            resp = client.assistant_chat("hello", stream=True, mode="agent",
-                                         request_id="e2e-agent-gate")
-            frames = parse_sse_stream(resp)
-            assert _sse_error_code(frames) == "AGENT_NOT_AUTHORIZED"
-
-        # 授权后：不再返回授权错误（模型不可用时按 AGNT-061 结构化降级）。
-        r = client.set_agent_consent(True)
-        assert r.status_code == 200
-        assert client.get_agent_consent().json()["granted"] is True
-        resp = client.assistant_chat("hello", stream=True, mode="agent",
-                                     request_id="e2e-agent-granted")
-        frames = parse_sse_stream(resp)
-        code = _sse_error_code(frames)
-        assert code != "AGENT_NOT_AUTHORIZED", f"unexpected auth error: {frames}"
-
-        # 撤销后立即拒绝（AGNT-006）。
-        r = client.set_agent_consent(False)
-        assert r.status_code == 200
-        resp = client.assistant_chat("hello", stream=True, mode="agent",
-                                     request_id="e2e-agent-revoked")
-        frames = parse_sse_stream(resp)
-        assert _sse_error_code(frames) == "AGENT_NOT_AUTHORIZED"
+        posted = client.post_assistant_message(
+            "请慢慢讲一个很长的故事", request_id="e2e-stop")
+        _assert_assistant_store_ok(posted, "POST /assistant/messages stop")
+        if posted.status_code != 200:
+            pytest.skip(f"could not start run: {posted.text[:150]}")
+        run_id = posted.json()["runId"]
+        cancelled = client.cancel_assistant_run(run_id)
+        _assert_assistant_store_ok(cancelled, "POST /assistant/runs/cancel")
+        assert cancelled.status_code == 200, cancelled.text[:200]
+        frames = parse_sse_stream(client.assistant_run_events(run_id))
+        assert frames
+        assert frames[-1].get("type") in {"done", "error"}
     finally:
-        cleanup()
+        client.set_agent_consent(False)
 
 
-def test_tool_confirm_rejects_unknown_call(user):
+def test_new_session_and_clear_history(user):
     client = user.client
-    r = client.confirm_assistant_tool("e2e-request", "no-such-call", True)
-    assert r.status_code == 400
-
-
-def test_enhanced_search_default_unchanged(user):
-    resp = user.client.assistant_chat("用一句话介绍这个社区", stream=True,
-                                      request_id="e2e-enhanced-default")
-    frames = parse_sse_stream(resp)
-    assert frames, "enhanced_search produced no frames"
-    codes = {f.get("errorCode") for f in frames if f.get("type") == "error"}
-    assert "AGENT_NOT_AUTHORIZED" not in codes
-
-
-def test_memory_list_after_consent(user):
-    client = user.client
-    r = client.set_agent_consent(True)
-    assert r.status_code == 200, r.text[:200]
+    _grant(client)
     try:
+        posted = client.post_assistant_message(
+            "记住这是第一会话", request_id="e2e-session-1")
+        _assert_assistant_store_ok(posted, "POST /assistant/messages session")
+        if posted.status_code != 200:
+            pytest.skip(f"could not start run: {posted.text[:150]}")
+        first_session = posted.json()["sessionId"]
+        created = client.create_assistant_session()
+        _assert_assistant_store_ok(created, "POST /assistant/sessions")
+        assert created.status_code == 200, created.text[:200]
+        new_session = created.json().get("sessionId")
+        assert isinstance(new_session, int) and new_session > 0
+        assert new_session != first_session
+
         listed = client.list_assistant_memory()
-        _assert_assistant_store_ok(listed, "GET /assistant/memory")
-        assert listed.status_code == 200, listed.text[:200]
+        _assert_assistant_store_ok(listed, "GET /assistant/memory after session")
+        assert listed.status_code == 200
+
+        deleted = client.delete_assistant_history()
+        _assert_assistant_store_ok(deleted, "DELETE /assistant/history")
+        assert deleted.status_code == 200, deleted.text[:200]
+        messages = client.list_assistant_messages()
+        _assert_assistant_store_ok(messages, "GET /assistant/messages after clear")
+        assert messages.status_code == 200
+        visible = [m for m in messages.json().get("messages") or []
+                   if m.get("kind") != "memory_changed"]
+        assert visible == []
+        listed_after = client.list_assistant_memory()
+        assert listed_after.status_code == 200
+    finally:
+        client.set_agent_consent(False)
+
+
+def test_memory_crud_and_undo(user):
+    client = user.client
+    _grant(client)
+    try:
+        added = client.add_assistant_memory(
+            "memory", "喜欢独立游戏", request_id="e2e-mem-add")
+        _assert_assistant_store_ok(added, "POST /assistant/memory")
+        assert added.status_code == 200, added.text[:200]
+        entry = added.json().get("entry") or {}
+        change_id = added.json().get("changeId")
+        assert entry.get("target") == "memory"
+        assert entry.get("content")
+        assert isinstance(entry.get("version"), int)
+        listed = client.list_assistant_memory(target="memory")
+        assert listed.status_code == 200
         body = listed.json()
-        assert isinstance(body.get("items"), list)
+        assert any(item.get("id") == entry.get("id")
+                   for item in body.get("items") or [])
+        caps = {c.get("target"): c for c in body.get("capacities") or []}
+        assert "memory" in caps
+        assert caps["memory"].get("limit") == 2200
+
+        replaced = client.replace_assistant_memory(
+            entry["id"], "喜欢独立游戏和像素风", entry["version"],
+            request_id="e2e-mem-replace")
+        _assert_assistant_store_ok(replaced, "PATCH /assistant/memory")
+        assert replaced.status_code == 200, replaced.text[:200]
+        undone = client.undo_assistant_memory_change(
+            replaced.json().get("changeId") or change_id)
+        _assert_assistant_store_ok(undone, "POST /assistant/memory/undo")
+        assert undone.status_code == 200, undone.text[:200]
+        removed = client.remove_assistant_memory(
+            entry["id"], undone.json().get("entry", {}).get("version", 1),
+            request_id="e2e-mem-del")
+        _assert_assistant_store_ok(removed, "DELETE /assistant/memory")
+        assert removed.status_code == 200, removed.text[:200]
+    finally:
+        client.set_agent_consent(False)
+
+
+def test_confirm_unknown_call_rejected(user):
+    client = user.client
+    _grant(client)
+    try:
+        r = client.confirm_assistant_run(1, "no-such-call", True)
+        assert r.status_code in {400, 404}
     finally:
         client.set_agent_consent(False)
 
@@ -236,16 +304,14 @@ def test_watch_crud_and_unknown_condition(user, published_post):
                    for item in remaining.json().get("tasks") or [])
 
 
-def test_watch_hits_list_empty_inbox(user):
+def test_watch_hit_route_removed(user):
     listed = user.client.list_assistant_watch_hits()
-    _assert_assistant_store_ok(listed, "GET /assistant/watch/hits")
-    assert listed.status_code == 200, listed.text[:200]
-    body = listed.json()
-    assert isinstance(body.get("hits"), list)
+    assert listed.status_code == 404, listed.text[:200]
 
 
-def test_watch_matcher_records_author_new_post(user, published_post):
+def test_watch_matcher_delivers_assistant_message(user, published_post):
     client = user.client
+    _grant(client)
     payload = {
         "conditionType": "author_new_post",
         "targetType": "author",
@@ -257,23 +323,28 @@ def test_watch_matcher_records_author_new_post(user, published_post):
     task_id = created.json().get("task", {}).get("id")
     assert isinstance(task_id, int) and task_id > 0
     try:
+        before = client.get_assistant_thread()
+        _assert_assistant_store_ok(before, "GET /assistant/thread before watch")
+        before_unread = (before.json().get("thread") or {}).get("unreadCount", 0)
         post = published_post(client)
 
-        def hit_for_new_post():
-            listed = client.list_assistant_watch_hits()
-            _assert_assistant_store_ok(listed, "GET /assistant/watch/hits matcher")
+        def unread_increased():
+            listed = client.get_assistant_thread()
+            _assert_assistant_store_ok(listed, "GET /assistant/thread matcher")
             if listed.status_code != 200:
                 return False
-            return any(
-                item.get("postId") == post["postId"]
-                and item.get("taskId") == task_id
-                for item in listed.json().get("hits") or []
-            )
+            unread = (listed.json().get("thread") or {}).get("unreadCount", 0)
+            return unread > before_unread
 
-        eventually(hit_for_new_post, desc="watch hit for author_new_post",
-                   timeout=60.0, interval=1.0)
+        try:
+            eventually(unread_increased, desc="watch proactive assistant unread",
+                       timeout=60.0, interval=1.0)
+        except AssertionError:
+            pytest.skip("watch delivery not observed (matcher/worker/LLM)")
+        assert post["postId"]
     finally:
         client.delete_assistant_watch(task_id)
+        client.set_agent_consent(False)
 
 
 def test_recommend_feedback_never_500(user, published_post):

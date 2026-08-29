@@ -40,7 +40,7 @@ def parse_sse_stream(resp, max_frames=1000):
             for line in raw.decode("utf-8", errors="replace").splitlines():
                 if line.startswith("data: "):
                     frames.append(json.loads(line[len("data: "):]))
-            if frames and frames[-1]["type"] == "done":
+            if frames and frames[-1].get("type") in {"done", "error"}:
                 done = True
         if done or len(frames) >= max_frames:
             break
@@ -239,23 +239,57 @@ class ApiClient:
     def unread_summary(self):
         return self.get("/api/v2/messages/unread")
 
-    def assistant_chat(self, message, stream=False, conversation_id=None,
-                       mode=None, attachments=None, request_id=None,
-                       context_post_id=None):
+    def get_assistant_thread(self):
+        return self.get("/api/v2/assistant/thread")
+
+    def list_assistant_messages(self, session_id=None, after_id=None,
+                                limit=None):
+        params = {}
+        if session_id is not None:
+            params["sessionId"] = session_id
+        if after_id is not None:
+            params["afterId"] = after_id
+        if limit is not None:
+            params["limit"] = limit
+        return self.get("/api/v2/assistant/messages", params=params or None)
+
+    def post_assistant_message(self, message, request_id=None,
+                               attachments=None, context_post_id=None):
         payload = {"message": message}
-        if conversation_id is not None:
-            payload["conversationId"] = conversation_id
-        if mode is not None:
-            payload["mode"] = mode
         if request_id is not None:
             payload["requestId"] = request_id
         if attachments:
             payload["attachments"] = attachments
         if context_post_id is not None:
             payload["contextPostId"] = context_post_id
+        return self.post("/api/v2/assistant/messages", json=payload)
+
+    def create_assistant_session(self):
+        return self.post("/api/v2/assistant/sessions")
+
+    def mark_assistant_thread_read(self):
+        return self.post("/api/v2/assistant/thread/read")
+
+    def delete_assistant_history(self):
+        return self.delete("/api/v2/assistant/history")
+
+    def assistant_run_events(self, run_id, after_seq=None, last_event_id=None,
+                             stream=True):
+        params = {}
+        if after_seq is not None:
+            params["afterSeq"] = after_seq
         headers = {"Accept": "text/event-stream"}
-        return self.post("/api/v2/assistant/chat", json=payload, stream=stream,
-                         headers=headers)
+        if last_event_id is not None:
+            headers["Last-Event-ID"] = str(last_event_id)
+        return self.get(f"/api/v2/assistant/runs/{run_id}/events",
+                        params=params or None, headers=headers, stream=stream)
+
+    def cancel_assistant_run(self, run_id):
+        return self.post(f"/api/v2/assistant/runs/{run_id}/cancel")
+
+    def confirm_assistant_run(self, run_id, call_id, approved):
+        return self.post(f"/api/v2/assistant/runs/{run_id}/confirm",
+                         json={"callId": call_id, "approved": bool(approved)})
 
     def get_agent_consent(self):
         return self.get("/api/v2/assistant/consent")
@@ -264,22 +298,34 @@ class ApiClient:
         return self.post("/api/v2/assistant/consent",
                          json={"granted": bool(granted)})
 
-    def confirm_assistant_tool(self, request_id, call_id, approved):
-        return self.post("/api/v2/assistant/tool/confirm",
-                         json={"requestId": request_id, "callId": call_id,
-                               "approved": bool(approved)})
-
-    def list_assistant_memory(self, layer=None):
+    def list_assistant_memory(self, target=None):
         params = {}
-        if layer is not None:
-            params["layer"] = layer
+        if target is not None:
+            params["target"] = target
         return self.get("/api/v2/assistant/memory", params=params or None)
 
-    def update_assistant_memory(self, memory_id, **body):
-        return self.patch(f"/api/v2/assistant/memory/{memory_id}", json=body)
+    def add_assistant_memory(self, target, content, request_id=None):
+        payload = {"target": target, "content": content}
+        if request_id is not None:
+            payload["requestId"] = request_id
+        return self.post("/api/v2/assistant/memory", json=payload)
 
-    def delete_assistant_memory(self, memory_id):
-        return self.delete(f"/api/v2/assistant/memory/{memory_id}")
+    def replace_assistant_memory(self, memory_id, content, version,
+                                 request_id=None):
+        payload = {"content": content, "version": version}
+        if request_id is not None:
+            payload["requestId"] = request_id
+        return self.patch(f"/api/v2/assistant/memory/{memory_id}", json=payload)
+
+    def remove_assistant_memory(self, memory_id, version, request_id=None):
+        params = {"version": version}
+        if request_id is not None:
+            params["requestId"] = request_id
+        return self.delete(f"/api/v2/assistant/memory/{memory_id}",
+                           params=params)
+
+    def undo_assistant_memory_change(self, change_id):
+        return self.post(f"/api/v2/assistant/memory/changes/{change_id}/undo")
 
     def list_assistant_watch(self):
         return self.get("/api/v2/assistant/watch")
@@ -300,23 +346,9 @@ class ApiClient:
             params["unreadOnly"] = unread_only
         return self.get("/api/v2/assistant/watch/hits", params=params or None)
 
-    def mark_assistant_watch_hits_read(self, hit_ids):
-        return self.post("/api/v2/assistant/watch/hits/read",
-                         json={"hitIds": list(hit_ids)})
-
     def submit_assistant_recommend_feedback(self, post_id, reason,
                                             request_id=None):
         payload = {"postId": post_id, "reason": reason}
         if request_id is not None:
             payload["requestId"] = request_id
         return self.post("/api/v2/assistant/recommend/feedback", json=payload)
-
-    def assistant_chat_stream(self, message, attempts=3):
-        last = None
-        for attempt in range(attempts):
-            last = self.assistant_chat(message, stream=True)
-            if last.status_code == 200:
-                return last
-            if attempt < attempts - 1:
-                time.sleep(2)
-        return last
