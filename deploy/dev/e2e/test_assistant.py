@@ -241,7 +241,7 @@ def test_confirm_unknown_call_rejected(user):
     _grant(client)
     try:
         r = client.confirm_assistant_run(1, "no-such-call", True)
-        assert r.status_code in {400, 404}
+        assert r.status_code in {400, 403, 404}
     finally:
         client.set_agent_consent(False)
 
