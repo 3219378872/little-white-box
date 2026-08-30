@@ -82,6 +82,17 @@ secure_runtime_paths() {
   find "$PID_DIR" -maxdepth 1 -type f -name '*.pid' -exec chmod 600 {} + 2>/dev/null || true
 }
 
+clear_sensitive_assistant_logs() {
+  local name logfile
+  for name in assistant-rpc assistant-watch assistant-agent; do
+    logfile="$LOG_DIR/$name.log"
+    if [[ -e "$logfile" && ! -L "$logfile" ]]; then
+      : >"$logfile"
+      chmod 600 "$logfile"
+    fi
+  done
+}
+
 # assistant.yaml DataSource is "${DB_ASSISTANT}". Older env files only set
 # DB_CONTENT; derive the DSN by swapping the schema name, keep user/query.
 ensure_assistant_db_env() {
@@ -654,6 +665,7 @@ app_up() {
   load_env
   ensure_assistant_db_env
   secure_runtime_paths
+  clear_sensitive_assistant_logs
   wipe_legacy_assistant_redis
   prepare_etc
   start_log_maintainer

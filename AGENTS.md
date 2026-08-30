@@ -66,6 +66,8 @@
   `Host: 0.0.0.0` 改写为回环地址，不改子仓原文件）。
 - `/tmp/xbh-run`、日志/pid 目录和 `/tmp/xbh-etc` 为 `0700`，日志为 `0600`；常驻维护器在单个
   stdout 日志超过 5 MiB 时 copy-truncate，并只保留一份 `*.log.1.gz`。
+- `app-up` 会在启动前清空历史 `assistant-rpc`、`assistant-watch`、`assistant-agent` 运行日志；这些
+  日志可能含用户输入、工具参数或内容摘要，不跨版本保留。
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
   可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
   （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
