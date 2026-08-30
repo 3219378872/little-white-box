@@ -1,5 +1,10 @@
+import os
+
+import pytest
+
 from api_client import assert_error, error_of, parse_sse_stream
 from poll import eventually
+from support import unique_key
 
 _ASSISTANT_DB_HINT = (
     "DB_ASSISTANT/schema is required (derive from DB_CONTENT; replay "
@@ -116,6 +121,10 @@ def test_async_message_and_event_reconnect(user):
         types = [f.get("type") for f in frames]
         assert types[-1] == "done", (
             f"assistant run must complete in the live gate: {frames[-1]}")
+        assert all(isinstance(frame.get("streamId"), str) and
+                   frame.get("streamId")
+                   for frame in frames if frame.get("type") == "token"), (
+            f"all streamed tokens must carry streamId: {frames}")
         last_seq = frames[-1].get("seq")
         assert isinstance(last_seq, int) and last_seq > 0
 
@@ -129,6 +138,87 @@ def test_async_message_and_event_reconnect(user):
         assert replayed, "reconnect must replay events after the cursor"
         assert all(frame.get("seq", 0) > cursor for frame in replayed)
         assert replayed[-1].get("type") == "done"
+    finally:
+        client.set_agent_consent(False)
+
+
+@pytest.mark.skipif(
+    os.environ.get("E2E_EXPECT_ASSISTANT_RESET") != "1",
+    reason="requires the deterministic local retry fixture",
+)
+def test_agent_stream_reset_replay(user):
+    client = user.client
+    _grant(client)
+    try:
+        marker = f"E2E_STREAM_RESET_MARKER_{unique_key('reset')}"
+        posted = client.post_assistant_message(
+            marker, request_id=unique_key("agent-reset"))
+        _assert_assistant_store_ok(posted, "POST /assistant/messages reset")
+        assert posted.status_code == 200, posted.text[:200]
+        run_id = posted.json().get("runId")
+        assert isinstance(run_id, int) and run_id > 0
+
+        frames = parse_sse_stream(client.assistant_run_events(run_id))
+        types = [frame.get("type") for frame in frames]
+        assert types[-1] == "done", frames
+        assert "response_reset" in types, frames
+
+        reset_index = types.index("response_reset")
+        reset = frames[reset_index]
+        losing = next(
+            frame for frame in reversed(frames[:reset_index])
+            if frame.get("type") == "token"
+        )
+        winning = next(
+            frame for frame in frames[reset_index + 1:]
+            if frame.get("type") == "token"
+        )
+        assert losing.get("text") == "losing attempt"
+        assert reset.get("streamId") == losing.get("streamId")
+        assert winning.get("streamId") and (
+            winning.get("streamId") != losing.get("streamId"))
+
+        assembled = ""
+        active_stream = ""
+        retired = set()
+        for frame in frames:
+            stream_id = frame.get("streamId") or ""
+            if frame.get("type") == "token":
+                if stream_id in retired:
+                    continue
+                if not active_stream:
+                    active_stream = stream_id
+                if stream_id == active_stream:
+                    assembled += frame.get("text") or ""
+            elif frame.get("type") == "response_reset":
+                assert stream_id == active_stream
+                retired.add(stream_id)
+                active_stream = ""
+                assembled = ""
+        assert assembled == "winning response", frames
+
+        replay = parse_sse_stream(client.assistant_run_events(
+            run_id,
+            after_seq=losing["seq"],
+            last_event_id=losing["seq"],
+        ))
+        assert replay and replay[0].get("type") == "response_reset", replay
+        assert replay[-1].get("type") == "done", replay
+        replay_text = "losing attempt"
+        for frame in replay:
+            if frame.get("type") == "response_reset":
+                replay_text = ""
+            elif frame.get("type") == "token":
+                replay_text += frame.get("text") or ""
+        assert replay_text == "winning response", replay
+
+        history = client.list_assistant_messages()
+        assert history.status_code == 200, history.text[:200]
+        answers = [item.get("content") for item in
+                   history.json().get("messages") or []
+                   if item.get("role") == "assistant"]
+        assert "winning response" in answers
+        assert "losing attempt" not in answers
     finally:
         client.set_agent_consent(False)
 

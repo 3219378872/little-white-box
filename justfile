@@ -79,6 +79,15 @@ e2e *args="":
     fi
     exec python3 -m pytest -v "$@"
 
+# 确定性验证 provider 截断重试、response_reset、SSE replay，并恢复原 agent provider
+e2e-agent-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    e2e_agent_reset
+
 # 只起/停 Docker 中间件
 middleware-up:
     #!/usr/bin/env bash

@@ -24,6 +24,8 @@ ENTRY_PORT="${ENTRY_PORT:-3002}"
 REDIS_CONTAINER="${REDIS_CONTAINER:-xbh-redis}"
 LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"
 LOG_ROTATE_INTERVAL_SECONDS="${LOG_ROTATE_INTERVAL_SECONDS:-30}"
+AGENT_FIXTURE_PORT="${AGENT_FIXTURE_PORT:-39091}"
+AGENT_FIXTURE_RESTORE=0
 
 RPC_SERVICES=(
   "user-rpc|$BACKEND|./app/user/rpc|-f|$ETC_DIR/app/user/rpc/etc/user.yaml"
@@ -74,6 +76,23 @@ load_env() {
   # shellcheck disable=SC1090
   source "$file"
   set +a
+  export ASSISTANT_LLM_MODEL_SMALL="${ASSISTANT_LLM_MODEL_SMALL:-}"
+  export ASSISTANT_LLM_REVIEW_MODEL="${ASSISTANT_LLM_REVIEW_MODEL:-}"
+  export ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
+  export ASSISTANT_LLM_CACHE_WRITE_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_CACHE_WRITE_COST_PER_MILLION_TOKENS:-0}"
+  export ASSISTANT_LLM_REASONING_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_REASONING_COST_PER_MILLION_TOKENS:-0}"
+  export ASSISTANT_LLM_FALLBACK_ENABLED="${ASSISTANT_LLM_FALLBACK_ENABLED:-false}"
+  export ASSISTANT_LLM_FALLBACK_ROUTE_ID="${ASSISTANT_LLM_FALLBACK_ROUTE_ID:-fallback}"
+  export ASSISTANT_LLM_FALLBACK_BOUNDARY="${ASSISTANT_LLM_FALLBACK_BOUNDARY:-default}"
+  export ASSISTANT_LLM_FALLBACK_WIRE_API="${ASSISTANT_LLM_FALLBACK_WIRE_API:-responses}"
+  export ASSISTANT_LLM_FALLBACK_ENDPOINT="${ASSISTANT_LLM_FALLBACK_ENDPOINT:-}"
+  export ASSISTANT_LLM_FALLBACK_API_KEY="${ASSISTANT_LLM_FALLBACK_API_KEY:-}"
+  export ASSISTANT_LLM_FALLBACK_MODEL="${ASSISTANT_LLM_FALLBACK_MODEL:-}"
+  export ASSISTANT_LLM_FALLBACK_PROMPT_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_PROMPT_COST_PER_MILLION_TOKENS:-0}"
+  export ASSISTANT_LLM_FALLBACK_COMPLETION_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_COMPLETION_COST_PER_MILLION_TOKENS:-0}"
+  export ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
+  export ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS:-0}"
+  export ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS:-0}"
 }
 
 secure_runtime_paths() {
@@ -480,6 +499,97 @@ stop_svc() {
     stop_tree "$pid"
   fi
   rm -f "$pidfile"
+}
+
+assistant_agent_row() {
+  local row
+  for row in "${MQ_SERVICES[@]}"; do
+    if [[ "$row" == assistant-agent\|* ]]; then
+      printf '%s\n' "$row"
+      return 0
+    fi
+  done
+  echo "assistant-agent service row is missing" >&2
+  return 1
+}
+
+restore_agent_after_fixture() {
+  [[ "$AGENT_FIXTURE_RESTORE" == "1" ]] || return 0
+  AGENT_FIXTURE_RESTORE=0
+  local restore_status=0 row
+  stop_svc assistant-agent || true
+  stop_svc llm-fixture || true
+  ensure_assistant_db_env
+  if row="$(assistant_agent_row)"; then
+    if ! start_row "$row" || ! wait_port 127.0.0.1 9136 120 assistant-agent-restored; then
+      echo "failed to restore assistant-agent; run just app-up" >&2
+      restore_status=1
+    fi
+  else
+    restore_status=1
+  fi
+  return "$restore_status"
+}
+
+e2e_agent_reset() {
+  load_env
+  ensure_assistant_db_env
+  secure_runtime_paths
+  local agent_row fixture_pidfile fixture_log agent_pidfile test_status restore_status=0
+  agent_row="$(assistant_agent_row)"
+  agent_pidfile="$PID_DIR/assistant-agent.pid"
+  if [[ ! -f "$agent_pidfile" ]] || ! kill -0 "$(cat "$agent_pidfile")" 2>/dev/null; then
+    echo "assistant-agent must be running before the reset fixture gate" >&2
+    return 1
+  fi
+
+  stop_svc llm-fixture
+  fixture_pidfile="$PID_DIR/llm-fixture.pid"
+  fixture_log="$LOG_DIR/llm-fixture.log"
+  : >"$fixture_log"
+  chmod 600 "$fixture_log"
+  setsid python3 "$ROOT/deploy/dev/e2e/fixtures/llm_provider.py" \
+    --port "$AGENT_FIXTURE_PORT" >>"$fixture_log" 2>&1 </dev/null &
+  echo $! >"$fixture_pidfile"
+  chmod 600 "$fixture_pidfile"
+  if ! wait_http "http://127.0.0.1:$AGENT_FIXTURE_PORT/health" 30 llm-fixture; then
+    stop_svc llm-fixture
+    return 1
+  fi
+
+  AGENT_FIXTURE_RESTORE=1
+  trap restore_agent_after_fixture EXIT
+  stop_svc assistant-agent
+  (
+    export ASSISTANT_LLM_ENABLED=true
+    export ASSISTANT_LLM_WIRE_API=responses
+    export ASSISTANT_LLM_ENDPOINT="http://127.0.0.1:$AGENT_FIXTURE_PORT/v1"
+    export ASSISTANT_LLM_API_KEY=""
+    export ASSISTANT_LLM_MODEL=fixture-model
+    export ASSISTANT_LLM_MODEL_SMALL=""
+    export ASSISTANT_LLM_REVIEW_MODEL=""
+    export ASSISTANT_LLM_PROMPT_COST_PER_MILLION_TOKENS=0
+    export ASSISTANT_LLM_COMPLETION_COST_PER_MILLION_TOKENS=0
+    export ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS=0
+    export ASSISTANT_LLM_CACHE_WRITE_COST_PER_MILLION_TOKENS=0
+    export ASSISTANT_LLM_REASONING_COST_PER_MILLION_TOKENS=0
+    export ASSISTANT_LLM_FALLBACK_ENABLED=false
+    start_row "$agent_row"
+  )
+  wait_port 127.0.0.1 9136 60 assistant-agent-fixture
+
+  set +e
+  E2E_EXPECT_ASSISTANT_RESET=1 PYTHONDONTWRITEBYTECODE=1 \
+    python3 -m pytest -v \
+    "$ROOT/deploy/dev/e2e/test_assistant.py::test_agent_stream_reset_replay"
+  test_status=$?
+  set -e
+  restore_agent_after_fixture || restore_status=$?
+  trap - EXIT
+  if [[ "$test_status" -ne 0 ]]; then
+    return "$test_status"
+  fi
+  return "$restore_status"
 }
 
 all_app_names() {
