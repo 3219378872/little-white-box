@@ -1,5 +1,3 @@
-import pytest
-
 from api_client import assert_error, error_of, parse_sse_stream
 from poll import eventually
 
@@ -22,11 +20,6 @@ def _grant(client):
     r = client.set_agent_consent(True)
     _assert_assistant_store_ok(r, "POST /assistant/consent")
     assert r.status_code == 200, r.text[:200]
-
-
-def _sse_error_code(frames):
-    error_frames = [f for f in frames if f.get("type") == "error"]
-    return error_frames[0].get("errorCode") if error_frames else None
 
 
 def test_assistant_endpoints_require_auth(anon):
@@ -64,11 +57,7 @@ def test_empty_message_rejected(user):
     _grant(user.client)
     try:
         r = user.client.post_assistant_message("")
-        assert r.status_code in {200, 400}
-        if r.status_code == 400:
-            assert error_of(r) is not None
-        else:
-            _assert_assistant_store_ok(r, "POST /assistant/messages empty")
+        assert_error(r, 400, 2)
     finally:
         user.client.set_agent_consent(False)
 
@@ -124,18 +113,21 @@ def test_async_message_and_event_reconnect(user):
         frames = parse_sse_stream(events)
         assert frames, "expected persistent run events"
         types = [f.get("type") for f in frames]
-        if types[-1] == "error":
-            pytest.skip(f"assistant degraded by upstream: {frames[-1]}")
-        assert types[-1] == "done", f"stream did not end with done: {types}"
+        assert types[-1] == "done", (
+            f"assistant run must complete in the live gate: {frames[-1]}")
         last_seq = frames[-1].get("seq")
         assert isinstance(last_seq, int) and last_seq > 0
 
+        seqs = [frame.get("seq") for frame in frames]
+        assert len(seqs) >= 2 and all(isinstance(seq, int) for seq in seqs)
+        cursor = seqs[-2]
         replay = client.assistant_run_events(
-            run_id, after_seq=0, last_event_id=0)
+            run_id, after_seq=max(0, cursor - 1), last_event_id=cursor)
         assert replay.status_code == 200
         replayed = parse_sse_stream(replay)
-        assert replayed, "reconnect must replay persisted events"
-        assert replayed[-1].get("type") in {"done", "error"}
+        assert replayed, "reconnect must replay events after the cursor"
+        assert all(frame.get("seq", 0) > cursor for frame in replayed)
+        assert replayed[-1].get("type") == "done"
     finally:
         client.set_agent_consent(False)
 
@@ -147,8 +139,7 @@ def test_stop_run(user):
         posted = client.post_assistant_message(
             "请慢慢讲一个很长的故事", request_id="e2e-stop")
         _assert_assistant_store_ok(posted, "POST /assistant/messages stop")
-        if posted.status_code != 200:
-            pytest.skip(f"could not start run: {posted.text[:150]}")
+        assert posted.status_code == 200, posted.text[:200]
         run_id = posted.json()["runId"]
         cancelled = client.cancel_assistant_run(run_id)
         _assert_assistant_store_ok(cancelled, "POST /assistant/runs/cancel")
@@ -167,8 +158,7 @@ def test_new_session_and_clear_history(user):
         posted = client.post_assistant_message(
             "记住这是第一会话", request_id="e2e-session-1")
         _assert_assistant_store_ok(posted, "POST /assistant/messages session")
-        if posted.status_code != 200:
-            pytest.skip(f"could not start run: {posted.text[:150]}")
+        assert posted.status_code == 200, posted.text[:200]
         first_session = posted.json()["sessionId"]
         created = client.create_assistant_session()
         _assert_assistant_store_ok(created, "POST /assistant/sessions")
@@ -240,8 +230,14 @@ def test_confirm_unknown_call_rejected(user):
     client = user.client
     _grant(client)
     try:
-        r = client.confirm_assistant_run(1, "no-such-call", True)
-        assert r.status_code in {400, 403, 404}
+        posted = client.post_assistant_message(
+            "回复一个字即可", request_id="e2e-confirm-owner")
+        _assert_assistant_store_ok(posted, "POST /assistant/messages confirm")
+        assert posted.status_code == 200, posted.text[:200]
+        run_id = posted.json().get("runId")
+        assert isinstance(run_id, int) and run_id > 0
+        r = client.confirm_assistant_run(run_id, "no-such-call", True)
+        assert_error(r, 400, 2)
     finally:
         client.set_agent_consent(False)
 
@@ -336,11 +332,8 @@ def test_watch_matcher_delivers_assistant_message(user, published_post):
             unread = (listed.json().get("thread") or {}).get("unreadCount", 0)
             return unread > before_unread
 
-        try:
-            eventually(unread_increased, desc="watch proactive assistant unread",
-                       timeout=60.0, interval=1.0)
-        except AssertionError:
-            pytest.skip("watch delivery not observed (matcher/worker/LLM)")
+        eventually(unread_increased, desc="watch proactive assistant unread",
+                   timeout=180.0, interval=1.0)
         assert post["postId"]
     finally:
         client.delete_assistant_watch(task_id)

@@ -282,7 +282,8 @@ class ApiClient:
         if last_event_id is not None:
             headers["Last-Event-ID"] = str(last_event_id)
         return self.get(f"/api/v2/assistant/runs/{run_id}/events",
-                        params=params or None, headers=headers, stream=stream)
+                        params=params or None, headers=headers, stream=stream,
+                        timeout=(5, 600))
 
     def cancel_assistant_run(self, run_id):
         return self.post(f"/api/v2/assistant/runs/{run_id}/cancel")

@@ -1,6 +1,8 @@
 # Shared helpers for the workspace justfile. Sourced, not executed.
 # shellcheck shell=bash
 
+umask 077
+
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 BACKEND="${BACKEND:-$ROOT/little-white-box-content-community}"
 FRONTEND="${FRONTEND:-$ROOT/little-white-box-front}"
@@ -19,6 +21,9 @@ COMPOSE_PROJECT="${COMPOSE_PROJECT:-deploy}"
 FRONT_PORT="${FRONT_PORT:-3003}"
 GATEWAY_PORT="${GATEWAY_PORT:-8888}"
 ENTRY_PORT="${ENTRY_PORT:-3002}"
+REDIS_CONTAINER="${REDIS_CONTAINER:-xbh-redis}"
+LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"
+LOG_ROTATE_INTERVAL_SECONDS="${LOG_ROTATE_INTERVAL_SECONDS:-30}"
 
 RPC_SERVICES=(
   "user-rpc|$BACKEND|./app/user/rpc|-f|$ETC_DIR/app/user/rpc/etc/user.yaml"
@@ -64,10 +69,17 @@ load_env() {
     echo "missing env file: $ENV_FILE or $LOCAL_ENV" >&2
     return 1
   fi
+  chmod 600 "$file"
   set -a
   # shellcheck disable=SC1090
   source "$file"
   set +a
+}
+
+secure_runtime_paths() {
+  install -d -m 700 "$RUN_DIR" "$LOG_DIR" "$PID_DIR" "$RUN_DIR/bin" "$ETC_DIR"
+  find "$LOG_DIR" -maxdepth 1 -type f -name '*.log*' -exec chmod 600 {} + 2>/dev/null || true
+  find "$PID_DIR" -maxdepth 1 -type f -name '*.pid' -exec chmod 600 {} + 2>/dev/null || true
 }
 
 # assistant.yaml DataSource is "${DB_ASSISTANT}". Older env files only set
@@ -81,24 +93,53 @@ ensure_assistant_db_env() {
 # Old sync Assistant stored Redis sessions under assistant:v2*. The v3 runtime
 # only uses Redis for run-event notify keys, so wiping the legacy namespace on
 # every app-up is idempotent and does not touch the MySQL marker.
-wipe_legacy_assistant_redis() {
-  local host pass
-  host="${REDIS_HOST:-127.0.0.1:6379}"
-  host="${host%%,*}"
-  host="${host#redis://}"
+redis_command() {
+  local endpoint host port pass
+  endpoint="${REDIS_HOST:-127.0.0.1:6379}"
+  endpoint="${endpoint%%,*}"
+  endpoint="${endpoint#redis://}"
+  endpoint="${endpoint#rediss://}"
+  endpoint="${endpoint%%/*}"
+  host="${endpoint%:*}"
+  port="${endpoint##*:}"
+  if [[ "$host" == "$endpoint" ]]; then
+    port=6379
+  fi
   pass="${REDIS_PASSWORD:-}"
-  if ! command -v redis-cli >/dev/null 2>&1; then
-    echo "redis-cli missing; skip legacy assistant key wipe"
-    return 0
+
+  if command -v redis-cli >/dev/null 2>&1; then
+    REDISCLI_AUTH="$pass" redis-cli --no-auth-warning -h "$host" -p "$port" "$@"
+    return
   fi
+  if ! docker inspect "$REDIS_CONTAINER" >/dev/null 2>&1; then
+    echo "redis-cli is unavailable and container $REDIS_CONTAINER is not running" >&2
+    return 1
+  fi
+  if [[ "$host" == "127.0.0.1" || "$host" == "localhost" ]]; then
+    host=127.0.0.1
+  fi
+  docker exec -i -e REDISCLI_AUTH="$pass" "$REDIS_CONTAINER" \
+    redis-cli --no-auth-warning -h "$host" -p "$port" "$@"
+}
+
+wipe_legacy_assistant_redis() {
+  local script count_script deleted remaining
+  script="local c='0' local n=0 repeat local r=redis.call('SCAN',c,'MATCH',ARGV[1],'COUNT',500) c=r[1] local k=r[2] if #k>0 then n=n+redis.call('UNLINK',unpack(k)) end until c=='0' return n"
+  count_script="local c='0' local n=0 repeat local r=redis.call('SCAN',c,'MATCH',ARGV[1],'COUNT',500) c=r[1] n=n+#r[2] until c=='0' return n"
   echo "wiping legacy assistant redis namespace assistant:v2*"
-  if [[ -n "$pass" ]]; then
-    redis-cli -u "redis://:${pass}@${host}" --scan --pattern 'assistant:v2*' \
-      | xargs -r redis-cli -u "redis://:${pass}@${host}" del >/dev/null 2>&1 || true
-  else
-    redis-cli -h "${host%:*}" -p "${host##*:}" --scan --pattern 'assistant:v2*' \
-      | xargs -r redis-cli -h "${host%:*}" -p "${host##*:}" del >/dev/null 2>&1 || true
+  deleted="$(redis_command --raw EVAL "$script" 0 'assistant:v2*')" || {
+    echo "legacy assistant redis wipe failed" >&2
+    return 1
+  }
+  remaining="$(redis_command --raw EVAL "$count_script" 0 'assistant:v2*')" || {
+    echo "legacy assistant redis wipe verification failed" >&2
+    return 1
+  }
+  if [[ ! "$deleted" =~ ^[0-9]+$ || "$remaining" != "0" ]]; then
+    echo "legacy assistant redis wipe incomplete (deleted=$deleted remaining=$remaining)" >&2
+    return 1
   fi
+  echo "legacy assistant redis keys removed: $deleted"
 }
 
 prepare_etc() {
@@ -270,6 +311,24 @@ apply_sql_patches() {
   done
 }
 
+require_apps_stopped_for_patches() {
+  local name pidfile pid running=()
+  while IFS= read -r name; do
+    [[ "$name" == "log-maintainer" ]] && continue
+    pidfile="$PID_DIR/$name.pid"
+    [[ -f "$pidfile" ]] || continue
+    pid="$(cat "$pidfile")"
+    if kill -0 "$pid" 2>/dev/null; then
+      running+=("$name:$pid")
+    fi
+  done < <(all_app_names)
+  if [[ ${#running[@]} -gt 0 ]]; then
+    echo "refusing schema patches while app processes are running: ${running[*]}" >&2
+    echo "run 'just app-down' before 'just middleware-up'" >&2
+    return 1
+  fi
+}
+
 # Load frozen eval/corpus.json (ids 1001-1300) and optional bulk
 # backend eval/dev/corpus_2000.json (ids 2001-4000) into xbh_content.post.
 # utf8mb4 is required; latin1 CLI charset double-encodes Chinese.
@@ -330,7 +389,9 @@ start_svc() {
   local logfile="$LOG_DIR/$name.log"
   local bindir="$RUN_DIR/bin"
   local executable="$bindir/$name"
-  mkdir -p "$PID_DIR" "$LOG_DIR" "$bindir"
+  secure_runtime_paths
+  touch "$logfile"
+  chmod 600 "$logfile"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     echo "already running: $name pid=$(cat "$pidfile")"
     return 0
@@ -344,12 +405,31 @@ start_svc() {
   echo "starting $name"
   (
     cd "$workdir"
-    setsid "$executable" "$@" >"$logfile" 2>&1 </dev/null &
+    setsid "$executable" "$@" >>"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
+    chmod 600 "$pidfile"
   )
   sleep 0.1
   if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     echo "$name exited during startup; see $logfile" >&2
+    return 1
+  fi
+}
+
+start_log_maintainer() {
+  local pidfile="$PID_DIR/log-maintainer.pid"
+  secure_runtime_paths
+  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    return 0
+  fi
+  setsid python3 "$ROOT/deploy/dev/log_maintainer.py" "$LOG_DIR" \
+    --max-bytes "$LOG_MAX_BYTES" --interval "$LOG_ROTATE_INTERVAL_SECONDS" \
+    >/dev/null 2>&1 </dev/null &
+  echo $! >"$pidfile"
+  chmod 600 "$pidfile"
+  sleep 0.1
+  if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+    echo "log maintainer exited during startup" >&2
     return 1
   fi
 }
@@ -397,11 +477,13 @@ all_app_names() {
     IFS='|' read -r name _ <<<"$row"
     printf '%s\n' "$name"
   done
-  printf '%s\n' gateway frontend
+  printf '%s\n' gateway frontend log-maintainer
 }
 
 middleware_up() {
   load_env
+  secure_runtime_paths
+  require_apps_stopped_for_patches
   require_compose_version
   echo "starting middleware containers"
   compose up -d
@@ -486,7 +568,9 @@ proxy_down() {
 frontend_up() {
   local pidfile="$PID_DIR/frontend.pid"
   local logfile="$LOG_DIR/frontend.log"
-  mkdir -p "$PID_DIR" "$LOG_DIR" "$RUN_DIR"
+  secure_runtime_paths
+  touch "$logfile"
+  chmod 600 "$logfile"
   if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
     echo "already running: frontend pid=$(cat "$pidfile")"
     return 0
@@ -551,6 +635,7 @@ frontend_up() {
     setsid python3 "$ROOT/deploy/dev/serve_release.py" "$FRONT_PORT" "$bundle" \
       >>"$logfile" 2>&1 </dev/null &
     echo $! >"$pidfile"
+    chmod 600 "$pidfile"
   )
 }
 
@@ -568,8 +653,10 @@ front_bundle_fresh() {
 app_up() {
   load_env
   ensure_assistant_db_env
+  secure_runtime_paths
+  wipe_legacy_assistant_redis
   prepare_etc
-  mkdir -p "$PID_DIR" "$LOG_DIR"
+  start_log_maintainer
   local row
   for row in "${RPC_SERVICES[@]}"; do
     start_row "$row"
@@ -584,7 +671,6 @@ app_up() {
   proxy_up
   wait_port 127.0.0.1 "$GATEWAY_PORT" 240 gateway
   wait_port 127.0.0.1 "$FRONT_PORT" 240 frontend
-  wipe_legacy_assistant_redis
   maybe_rebuild_search
   echo "entry http://127.0.0.1:$ENTRY_PORT/  (page=$(http_code "http://127.0.0.1:$ENTRY_PORT/") api=$(http_code "http://127.0.0.1:$ENTRY_PORT/api/v1/"))"
 }

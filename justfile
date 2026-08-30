@@ -10,9 +10,12 @@ root := justfile_directory()
 default:
     @just --list
 
-# 全量启动：中间件、覆盖配置、后端、前端、反代
-up: middleware-up app-up
-    @just status
+# 全量启动：先停旧应用，再迁移中间件，最后启动同一源码版本的应用
+up:
+    just app-down
+    just middleware-up
+    just app-up
+    just status
 
 # 全量停止：应用进程、反代、中间件容器（保留数据卷）
 down: app-down middleware-down

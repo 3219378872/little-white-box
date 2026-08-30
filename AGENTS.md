@@ -26,12 +26,12 @@
 | [deploy/dev/middleware-override.yml](deploy/dev/middleware-override.yml) | 叠加在后端 compose 之上的本地覆盖：端口重映射（Grafana→33000、SeaweedFS 卷 HTTP→18080）与 RocketMQ cgroup v2 规避参数 |
 | [deploy/dev/proxy.conf](deploy/dev/proxy.conf) | :3002 同源入口 nginx 配置（`/`→前端 :3003，`/api/`→Gateway :8888，`/xbh-media/`→SeaweedFS S3 :8333）；容器 `xbh-dev-proxy` 以 `--network host` 运行 |
 | [deploy/dev/seed_dev_user.sql](deploy/dev/seed_dev_user.sql) | 测试账号种子；eval 语料与生成/灌库脚本已迁至后端仓 `eval/`、`scripts/`（见下「运行时产物与数据」） |
-| [deploy/dev/e2e/](deploy/dev/e2e/) | 黑盒 e2e 套件（pytest，对真实联调栈 `:3002` 跑 117 用例；`just e2e` 全量，传 pytest 路径/过滤条件时只跑所选项） |
+| [deploy/dev/e2e/](deploy/dev/e2e/) | 黑盒 e2e 套件（pytest，对真实联调栈 `:3002` 当前收集 116 用例；`just e2e` 全量，传 pytest 路径/过滤条件时只跑所选项） |
 
 约束：
 
 - 密钥只存在于 `/tmp/xbh-dev.env` 或 `deploy/dev/.env`（前者优先），两者都不进仓库；
-  `deploy/dev/.env` 必须保持被 `.gitignore` 忽略。
+  `deploy/dev/.env` 必须保持被 `.gitignore` 忽略；加载时收紧为 `0600`。
 - 修改 `stack.sh` 时保持函数式结构，兼容 `bash -euo pipefail`；改动后至少跑
   `bash -n` 与 `just status` 验证。
 
@@ -50,7 +50,8 @@
 
 ### 命令
 
-- `just up` / `just down`（alias `start` / `stop`）：全量起停 = `middleware-up` + `app-up`
+- `just up` / `just down`（alias `start` / `stop`）：`up` 先停止现有应用，再执行
+  `middleware-up` 的 schema patch，最后启动同一源码版本的应用；禁止带旧进程重放迁移。
 - `just restart`；`just status`：容器、进程 pid 存活与关键端口探测
 - `just seed` = `seed-dev-user` + `seed-eval-corpus`，均可单独执行
 - 分步控制：`middleware-up/down` 只管 Docker 中间件（保留数据卷）；`app-up/down` 只管
@@ -63,6 +64,8 @@
   服务配置覆盖副本在 `/tmp/xbh-etc`
   （复制仓库 yaml，把 RPC `ListenOn`、网关 `RestConf` 与各服务 `DevServer` 的
   `Host: 0.0.0.0` 改写为回环地址，不改子仓原文件）。
+- `/tmp/xbh-run`、日志/pid 目录和 `/tmp/xbh-etc` 为 `0700`，日志为 `0600`；常驻维护器在单个
+  stdout 日志超过 5 MiB 时 copy-truncate，并只保留一份 `*.log.1.gz`。
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
   可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
   （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
