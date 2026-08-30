@@ -26,7 +26,6 @@ def test_assistant_endpoints_require_auth(anon):
     assert_error(anon.get_assistant_thread(), 401, 1006)
     assert_error(anon.list_assistant_messages(), 401, 1006)
     assert_error(anon.post_assistant_message("hello"), 401, 1006)
-    assert_error(anon.create_assistant_session(), 401, 1006)
     assert_error(anon.mark_assistant_thread_read(), 401, 1006)
     assert_error(anon.delete_assistant_history(), 401, 1006)
     assert_error(anon.assistant_run_events(1, stream=False), 401, 1006)
@@ -51,6 +50,8 @@ def test_old_chat_and_hits_routes_are_gone(user):
     assert chat.status_code == 404, chat.text[:200]
     hits = user.client.list_assistant_watch_hits()
     assert hits.status_code == 404, hits.text[:200]
+    sessions = user.client.post("/api/v2/assistant/sessions")
+    assert sessions.status_code == 404, sessions.text[:200]
 
 
 def test_empty_message_rejected(user):
@@ -151,7 +152,7 @@ def test_stop_run(user):
         client.set_agent_consent(False)
 
 
-def test_new_session_and_clear_history(user):
+def test_clear_history_keeps_memory(user):
     client = user.client
     _grant(client)
     try:
@@ -159,16 +160,11 @@ def test_new_session_and_clear_history(user):
             "记住这是第一会话", request_id="e2e-session-1")
         _assert_assistant_store_ok(posted, "POST /assistant/messages session")
         assert posted.status_code == 200, posted.text[:200]
-        first_session = posted.json()["sessionId"]
-        created = client.create_assistant_session()
-        _assert_assistant_store_ok(created, "POST /assistant/sessions")
-        assert created.status_code == 200, created.text[:200]
-        new_session = created.json().get("sessionId")
-        assert isinstance(new_session, int) and new_session > 0
-        assert new_session != first_session
+        session_id = posted.json()["sessionId"]
+        assert isinstance(session_id, int) and session_id > 0
 
         listed = client.list_assistant_memory()
-        _assert_assistant_store_ok(listed, "GET /assistant/memory after session")
+        _assert_assistant_store_ok(listed, "GET /assistant/memory before clear")
         assert listed.status_code == 200
 
         deleted = client.delete_assistant_history()
@@ -182,6 +178,10 @@ def test_new_session_and_clear_history(user):
         assert visible == []
         listed_after = client.list_assistant_memory()
         assert listed_after.status_code == 200
+        thread = client.get_assistant_thread()
+        _assert_assistant_store_ok(thread, "GET /assistant/thread after clear")
+        assert thread.status_code == 200
+        assert thread.json().get("thread", {}).get("sessionId") == session_id
     finally:
         client.set_agent_consent(False)
 

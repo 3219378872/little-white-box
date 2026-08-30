@@ -264,9 +264,6 @@ class ApiClient:
             payload["contextPostId"] = context_post_id
         return self.post("/api/v2/assistant/messages", json=payload)
 
-    def create_assistant_session(self):
-        return self.post("/api/v2/assistant/sessions")
-
     def mark_assistant_thread_read(self):
         return self.post("/api/v2/assistant/thread/read")
 
