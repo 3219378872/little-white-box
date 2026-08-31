@@ -1,0 +1,8 @@
+[submodule "little-white-box-content-community"]
+	path = little-white-box-content-community
+	url = git@github.com:3219378872/little-white-box-content-community.git
+	branch = main
+[submodule "little-white-box-front"]
+	path = little-white-box-front
+	url = git@github.com:3219378872/little-white-box-front.git
+	branch = main

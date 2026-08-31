@@ -1,6 +1,4 @@
-# Child repositories are independent git checkouts.
-little-white-box-content-community/
-little-white-box-front/
+# Nested local trees that are not git submodules.
 refactor-content-community/
 
 .worktree/
