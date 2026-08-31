@@ -348,7 +348,9 @@ def test_watch_crud_and_unknown_condition(user, published_post):
     assert created.status_code == 200, created.text[:200]
     task = created.json().get("task") or {}
     task_id = task.get("id")
+    task_version = task.get("version")
     assert isinstance(task_id, int) and task_id > 0
+    assert isinstance(task_version, int) and task_version > 0
 
     try:
         listed = client.list_assistant_watch()
@@ -364,12 +366,24 @@ def test_watch_crud_and_unknown_condition(user, published_post):
             f"duplicate watch must be conflict/error not 500: "
             f"{dup.status_code} {dup.text[:200]}")
 
-        patched = client.update_assistant_watch(task_id, False)
+        patched = client.update_assistant_watch(
+            task_id, False, task_version)
         _assert_assistant_store_ok(patched, "PATCH /assistant/watch")
         assert patched.status_code == 200, patched.text[:200]
+        patched_task = patched.json().get("task") or {}
+        patched_version = patched_task.get("version")
+        assert isinstance(patched_version, int)
+        assert patched_version == task_version + 1
+        task_version = patched_version
+
+        stale = client.update_assistant_watch(
+            task_id, True, task_version - 1)
+        assert_error(stale, 409, 2007)
+
         after = client.list_assistant_watch().json().get("tasks") or []
         found = next(item for item in after if item.get("id") == task_id)
         assert found.get("enabled") is False
+        assert found.get("version") == task_version
 
         unknown = client.create_assistant_watch({
             "conditionType": "price_drop",
@@ -381,7 +395,7 @@ def test_watch_crud_and_unknown_condition(user, published_post):
             f"unknown conditionType must be 4xx, got {unknown.status_code}: "
             f"{unknown.text[:200]}")
     finally:
-        deleted = client.delete_assistant_watch(task_id)
+        deleted = client.delete_assistant_watch(task_id, task_version)
         _assert_assistant_store_ok(deleted, "DELETE /assistant/watch")
         assert deleted.status_code == 200, deleted.text[:200]
         remaining = client.list_assistant_watch()
@@ -407,7 +421,9 @@ def test_watch_matcher_delivers_assistant_message(user, published_post):
     _assert_assistant_store_ok(created, "POST /assistant/watch matcher")
     assert created.status_code == 200, created.text[:200]
     task_id = created.json().get("task", {}).get("id")
+    task_version = created.json().get("task", {}).get("version")
     assert isinstance(task_id, int) and task_id > 0
+    assert isinstance(task_version, int) and task_version > 0
     try:
         before = client.get_assistant_thread()
         _assert_assistant_store_ok(before, "GET /assistant/thread before watch")
@@ -426,7 +442,7 @@ def test_watch_matcher_delivers_assistant_message(user, published_post):
                    timeout=180.0, interval=1.0)
         assert post["postId"]
     finally:
-        client.delete_assistant_watch(task_id)
+        client.delete_assistant_watch(task_id, task_version)
         client.set_agent_consent(False)
 
 
