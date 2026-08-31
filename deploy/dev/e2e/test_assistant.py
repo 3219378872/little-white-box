@@ -8,7 +8,7 @@ from support import unique_key
 
 _ASSISTANT_DB_HINT = (
     "DB_ASSISTANT/schema is required (derive from DB_CONTENT; replay "
-    "patches + GRANT ALL on xbh_assistant)"
+    "patches + apply the app account runtime DML grants)"
 )
 
 

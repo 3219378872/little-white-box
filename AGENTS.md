@@ -53,6 +53,8 @@
 - `just up` / `just down`（alias `start` / `stop`）：`up` 先停止现有应用，再执行
   `middleware-up` 的 schema patch，最后启动同一源码版本的应用；禁止带旧进程重放迁移。
 - `just restart`；`just status`：容器、进程 pid 存活与关键端口探测
+- `just rotate-db-credentials`：只轮换本地 app/E2E MySQL 凭据并原子改写 env，不输出新值；
+  下一次 `middleware-up` 创建独立账号并撤销旧默认账号
 - `just seed` = `seed-dev-user` + `seed-eval-corpus`，均可单独执行
 - 分步控制：`middleware-up/down` 只管 Docker 中间件（保留数据卷）；`app-up/down` 只管
   本机进程与反代；`infer-up/down` 管可选算法服务（compose profile `algorithm`：
@@ -76,7 +78,9 @@
 - `middleware-up` 每次对后端仓 `deploy/sql/patches/*.sql` 做幂等重放（补丁必须自幂等，
   约定见该目录 README）；基线 schema 仅空卷初始化时经 initdb.d 生效。
 - `xbh_assistant` 由上述 patches 创建；`app-up` 在 `DB_ASSISTANT` 为空时从
-  `DB_CONTENT` 替换 schema 名得到 DSN，并对该库 GRANT ALL 给应用账号。
+  `DB_CONTENT` 替换 schema 名得到 DSN。app 使用独立 `APP_MYSQL_*` 账号且只具备七个业务 schema
+  的 SELECT/INSERT/UPDATE/DELETE；E2E 使用不同的 `E2E_MYSQL_*` 账号且只有 SELECT，旧 `xbh`
+  默认账号在授权收敛后删除。
 - 重启机器后 `/tmp` 产物与反代容器消失，重新 `just up` 即可。
 - CanvasKit 由静态伺服层从 `<front>/web/canvaskit/`（编排层符号链接到 SDK 缓存，随升级
   自动跟随）同源提供，构建期经 `--dart-define` 注入；SDK 缺失时回退 gstatic 并打警告。

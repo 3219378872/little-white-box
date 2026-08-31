@@ -35,6 +35,15 @@ status:
     source "$ROOT/deploy/dev/stack.sh"
     stack_status
 
+# 原子轮换 app/e2e MySQL 凭据；不改 provider/gateway 等其他配置，不输出新值
+rotate-db-credentials:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    rotate_dev_db_credentials
+
 # 写入本地测试账号 admin / 123456（幂等，已存在则重置密码）
 seed-dev-user:
     #!/usr/bin/env bash
@@ -65,7 +74,7 @@ e2e *args="":
     ROOT="{{root}}"
     # shellcheck source=/dev/null
     source "$ROOT/deploy/dev/stack.sh"
-    load_env >/dev/null 2>&1 || true
+    load_env
     export PYTHONDONTWRITEBYTECODE=1
     set -- {{args}}
     has_selection=0

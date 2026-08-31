@@ -48,7 +48,8 @@ nginx 配置当时在 `/tmp/xbh-dev-proxy.conf`，容器名 `xbh-dev-proxy`（`-
 
 7. **旧 MySQL 卷 root 密码对不上 compose 默认值**  
    `docker exec` 走 localhost socket 能进，宿主机 TCP 显示为 `root@172.28.3.1`。  
-   密码里的 `@`/`!` 不编码会拆 DSN。当时建了 `xbh` / `xbhdev`。
+   密码里的 `@`/`!` 不编码会拆 DSN。当时建过 `xbh` / `xbhdev`；2026-08-31 起由
+   `just rotate-db-credentials` 生成独立 app/E2E 随机凭据，`middleware-up` 收敛最小权限并删除该旧账号。
 
 8. **旧库缺列缺表**  
    `xbh_content.post.revision`、`idempotency`，`xbh_user.personalization_preference`，`xbh_message.message.media_id`。  
@@ -303,8 +304,9 @@ e2e 全量 **111 passed**（含 4 个 agent 用例）；曾出现 verify-code IP
   换成 `xbh_assistant`（凭证与查询串不变）；DSN 只在 `/tmp/xbh-dev.env` 或
   `deploy/dev/.env`，不入库。
 - `xbh_assistant` 由后端补丁 `20260827_assistant_runtime.sql` 创建；
-  `middleware-up` 在 patches 之后对该库 `GRANT ALL` 给应用账号（旧卷否则只有
-  其他 xbh_* 的权限，memory/watch 写会 503）。
+  `middleware-up` 在 patches 后给 `APP_MYSQL_*` 账号授予七个业务 schema 的运行时 DML，给不同的
+  `E2E_MYSQL_*` 账号只授予 SELECT；授权前先 REVOKE，避免旧卷残留扩大权限。账号密码以 hex 数据交给
+  MySQL `QUOTE()`，不直接插入 SQL 或写入输出。
 - Watch matcher 进程名 `assistant-watch`（`app/assistant/mq`），`just app-up`
   随 MQ_SERVICES 拉起；订阅 `post-*`，命中写入 `xbh_assistant.watch_hit`。
   `discussion_spike` 仍未消费行为事件。

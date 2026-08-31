@@ -93,6 +93,8 @@ load_env() {
   export ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
   export ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS:-0}"
   export ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS:-0}"
+  ensure_assistant_db_env
+  validate_dev_db_env
 }
 
 secure_runtime_paths() {
@@ -118,6 +120,131 @@ ensure_assistant_db_env() {
   if [[ -z "${DB_ASSISTANT:-}" && -n "${DB_CONTENT:-}" ]]; then
     export DB_ASSISTANT="${DB_CONTENT/xbh_content/xbh_assistant}"
   fi
+}
+
+validate_mysql_account_name() {
+  local name="$1" label="$2"
+  if [[ ! "$name" =~ ^[A-Za-z0-9_]{1,32}$ ]]; then
+    echo "$label must match [A-Za-z0-9_]{1,32}" >&2
+    return 1
+  fi
+  if [[ "$name" == "root" || "$name" == "xbh" ]]; then
+    echo "$label must not use a reserved legacy or root account" >&2
+    return 1
+  fi
+}
+
+validate_dev_db_env() {
+  local app_user="${APP_MYSQL_USER:-}" app_pass="${APP_MYSQL_PASSWORD:-}"
+  local e2e_user="${E2E_MYSQL_USER:-}" e2e_pass="${E2E_MYSQL_PASSWORD:-}"
+  validate_mysql_account_name "$app_user" APP_MYSQL_USER || return 1
+  validate_mysql_account_name "$e2e_user" E2E_MYSQL_USER || return 1
+  if [[ "$app_user" == "$e2e_user" ]]; then
+    echo "APP_MYSQL_USER and E2E_MYSQL_USER must be different accounts" >&2
+    return 1
+  fi
+  if [[ ${#app_pass} -lt 32 || ${#e2e_pass} -lt 32 ]]; then
+    echo "APP_MYSQL_PASSWORD and E2E_MYSQL_PASSWORD must each contain at least 32 characters" >&2
+    return 1
+  fi
+  if [[ "$app_pass" == "$e2e_pass" ]]; then
+    echo "APP_MYSQL_PASSWORD and E2E_MYSQL_PASSWORD must be different" >&2
+    return 1
+  fi
+
+  local key value expected_prefix="${app_user}:${app_pass}@tcp("
+  for key in DB_CONTENT DB_USER DB_INTERACTION DB_MEDIA DB_MESSAGE DB_FEED DB_ASSISTANT; do
+    value="${!key:-}"
+    if [[ -z "$value" || "$value" != "$expected_prefix"* ]]; then
+      echo "$key must use APP_MYSQL_USER/APP_MYSQL_PASSWORD over a tcp DSN" >&2
+      return 1
+    fi
+  done
+}
+
+random_hex_secret() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 24
+    return
+  fi
+  od -An -N24 -v -tx1 /dev/urandom | tr -d '[:space:]'
+}
+
+# Atomically rotate only the local app/e2e MySQL credentials. Provider keys,
+# gateways and all non-DB settings are copied byte-for-byte. DB DSN hosts,
+# schemas and query strings are preserved while credentials become references
+# to the new app variables. Values are never printed.
+rotate_dev_db_credentials() {
+  local file=""
+  if [[ -f "$ENV_FILE" ]]; then
+    file="$ENV_FILE"
+  elif [[ -f "$LOCAL_ENV" ]]; then
+    file="$LOCAL_ENV"
+  else
+    echo "missing env file: $ENV_FILE or $LOCAL_ENV" >&2
+    return 1
+  fi
+  if [[ -L "$file" || ! -f "$file" ]]; then
+    echo "dev env must be a regular non-symlink file" >&2
+    return 1
+  fi
+  chmod 600 "$file"
+
+  local app_user="xbh_app" e2e_user="xbh_e2e" app_pass e2e_pass tmp
+  app_pass="$(random_hex_secret)" || return 1
+  e2e_pass="$(random_hex_secret)" || return 1
+  if [[ ! "$app_pass" =~ ^[0-9a-f]{48}$ || ! "$e2e_pass" =~ ^[0-9a-f]{48}$ || "$app_pass" == "$e2e_pass" ]]; then
+    echo "failed to generate independent MySQL credentials" >&2
+    return 1
+  fi
+
+  tmp="$(mktemp "$(dirname "$file")/.xbh-dev-env.XXXXXX")"
+  chmod 600 "$tmp"
+  local line key value quote dsn_tail saw_content=0
+  {
+    printf 'APP_MYSQL_USER=%s\n' "$app_user"
+    printf 'APP_MYSQL_PASSWORD=%s\n' "$app_pass"
+    printf 'E2E_MYSQL_USER=%s\n' "$e2e_user"
+    printf 'E2E_MYSQL_PASSWORD=%s\n' "$e2e_pass"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(APP_MYSQL_USER|APP_MYSQL_PASSWORD|E2E_MYSQL_USER|E2E_MYSQL_PASSWORD)[[:space:]]*= ]]; then
+        continue
+      fi
+      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(DB_CONTENT|DB_USER|DB_INTERACTION|DB_MEDIA|DB_MESSAGE|DB_FEED|DB_ASSISTANT)[[:space:]]*= ]]; then
+        key="${BASH_REMATCH[2]}"
+        value="${line#*=}"
+        value="${value#"${value%%[![:space:]]*}"}"
+        quote=""
+        if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
+          quote="${value:0:1}"
+          if [[ "${value: -1}" != "$quote" ]]; then
+            rm -f "$tmp"
+            echo "$key has an unterminated quoted DSN" >&2
+            return 1
+          fi
+          value="${value:1:${#value}-2}"
+        fi
+        if [[ "$value" != *"@tcp("* || "$value" != *")/"* ]]; then
+          rm -f "$tmp"
+          echo "$key is not a supported tcp MySQL DSN" >&2
+          return 1
+        fi
+        dsn_tail="tcp(${value##*@tcp(}"
+        printf '%s="${APP_MYSQL_USER}:${APP_MYSQL_PASSWORD}@%s"\n' "$key" "$dsn_tail"
+        [[ "$key" == "DB_CONTENT" ]] && saw_content=1
+        continue
+      fi
+      printf '%s\n' "$line"
+    done <"$file"
+  } >"$tmp"
+  if [[ "$saw_content" != "1" ]]; then
+    rm -f "$tmp"
+    echo "DB_CONTENT is required before rotating MySQL credentials" >&2
+    return 1
+  fi
+  mv -f "$tmp" "$file"
+  chmod 600 "$file"
+  echo "rotated local app/e2e MySQL credentials in $file"
 }
 
 # Old sync Assistant stored Redis sessions under assistant:v2*. The v3 runtime
@@ -148,7 +275,7 @@ redis_command() {
   if [[ "$host" == "127.0.0.1" || "$host" == "localhost" ]]; then
     host=127.0.0.1
   fi
-  docker exec -i -e REDISCLI_AUTH="$pass" "$REDIS_CONTAINER" \
+  REDISCLI_AUTH="$pass" docker exec -i -e REDISCLI_AUTH "$REDIS_CONTAINER" \
     redis-cli --no-auth-warning -h "$host" -p "$port" "$@"
 }
 
@@ -283,8 +410,18 @@ apply_analytics_schema() {
 
 mysql_root() {
   local pass="${MYSQL_ROOT_PASSWORD:-Xbh@MySQL2024!}"
-  docker exec -i -e MYSQL_PWD="$pass" xbh-mysql \
+  MYSQL_PWD="$pass" docker exec -i -e MYSQL_PWD xbh-mysql \
     mysql -uroot --default-character-set=utf8mb4 "$@"
+}
+
+mysql_value_hex() {
+  local value="$1" encoded
+  encoded="$(printf '%s' "$value" | od -An -v -tx1 | tr -d '[:space:]')"
+  if [[ -z "$encoded" || ! "$encoded" =~ ^[0-9a-f]+$ ]]; then
+    echo "failed to encode MySQL account value" >&2
+    return 1
+  fi
+  printf '%s' "$encoded"
 }
 
 # Same empty-volume constraint as schema SQL. Seed the local test user on
@@ -295,29 +432,53 @@ apply_dev_user() {
   mysql_root <"$sql"
 }
 
-# The black-box e2e suite probes MySQL rows through a dedicated read-only
-# account (deploy/dev/e2e/dbprobe.py). Nothing in the schema SQL creates it,
-# so seed it here on every middleware-up; ALTER USER keeps an already-seeded
-# volume self-healing. Values must be single-quote-safe.
-# The same default account (xbh) is the app DSN user: it already has ALL on
-# the other xbh_* schemas from init, but xbh_assistant landed later and
-# needs ALL so assistant-rpc can write memory/watch.
-apply_e2e_db_grants() {
-  local user="${E2E_MYSQL_USER:-xbh}"
-  local pass="${E2E_MYSQL_PASSWORD:-xbhdev}"
-  echo "seeding e2e db account ${user}"
+# Application processes and black-box DB probes use separate accounts. The
+# app account receives only runtime DML on the seven MySQL schemas; E2E gets
+# read-only access. Passwords enter SQL as hex data and are quoted by MySQL,
+# never interpolated as SQL literals or printed. Revoke-first keeps reused
+# accounts from retaining grants issued by older stack versions.
+apply_dev_db_grants() {
+  validate_dev_db_env || return 1
+  local app_user="$APP_MYSQL_USER" e2e_user="$E2E_MYSQL_USER"
+  local app_pass_hex e2e_pass_hex
+  app_pass_hex="$(mysql_value_hex "$APP_MYSQL_PASSWORD")" || return 1
+  e2e_pass_hex="$(mysql_value_hex "$E2E_MYSQL_PASSWORD")" || return 1
+  echo "seeding isolated app/e2e database accounts (${app_user}, ${e2e_user})"
   mysql_root <<SQL
-CREATE USER IF NOT EXISTS '${user}'@'%';
-ALTER USER '${user}'@'%' IDENTIFIED BY '${pass}';
-GRANT SELECT ON xbh_content.* TO '${user}'@'%';
-GRANT SELECT ON xbh_user.* TO '${user}'@'%';
-GRANT SELECT ON xbh_interaction.* TO '${user}'@'%';
-GRANT SELECT ON xbh_media.* TO '${user}'@'%';
-GRANT SELECT ON xbh_message.* TO '${user}'@'%';
-GRANT SELECT ON xbh_feed.* TO '${user}'@'%';
 CREATE DATABASE IF NOT EXISTS xbh_assistant DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-GRANT ALL PRIVILEGES ON xbh_assistant.* TO '${user}'@'%';
-FLUSH PRIVILEGES;
+
+CREATE USER IF NOT EXISTS '${app_user}'@'%';
+SET @app_password = CONVERT(X'${app_pass_hex}' USING utf8mb4);
+SET @account_sql = CONCAT('ALTER USER ''${app_user}''@''%'' IDENTIFIED BY ', QUOTE(@app_password));
+PREPARE account_stmt FROM @account_sql;
+EXECUTE account_stmt;
+DEALLOCATE PREPARE account_stmt;
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_content.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_user.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_interaction.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_media.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_message.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_feed.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_assistant.* TO '${app_user}'@'%';
+
+CREATE USER IF NOT EXISTS '${e2e_user}'@'%';
+SET @e2e_password = CONVERT(X'${e2e_pass_hex}' USING utf8mb4);
+SET @account_sql = CONCAT('ALTER USER ''${e2e_user}''@''%'' IDENTIFIED BY ', QUOTE(@e2e_password));
+PREPARE account_stmt FROM @account_sql;
+EXECUTE account_stmt;
+DEALLOCATE PREPARE account_stmt;
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM '${e2e_user}'@'%';
+GRANT SELECT ON xbh_content.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_user.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_interaction.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_media.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_message.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_feed.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_assistant.* TO '${e2e_user}'@'%';
+
+DROP USER IF EXISTS 'xbh'@'%';
+DROP USER IF EXISTS 'xbh'@'localhost';
 SQL
 }
 
@@ -611,7 +772,7 @@ middleware_up() {
   wait_port 127.0.0.1 3306 90 mysql
   apply_dev_user
   apply_sql_patches
-  apply_e2e_db_grants
+  apply_dev_db_grants
   apply_eval_corpus
   wait_port 127.0.0.1 6379 60 redis
   wait_port 127.0.0.1 2379 60 etcd

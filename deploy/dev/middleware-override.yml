@@ -2,13 +2,13 @@
 services:
   seaweedfs:
     ports: !override
-      - "9333:9333"
-      - "18080:8080"
-      - "8887:8888"
-      - "8333:8333"
+      - "127.0.0.1:9333:9333"
+      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:8887:8888"
+      - "127.0.0.1:8333:8333"
   grafana:
     ports: !override
-      - "33000:3000"
+      - "127.0.0.1:33000:3000"
   rocketmq-namesrv:
     restart: unless-stopped
   rocketmq-broker:
