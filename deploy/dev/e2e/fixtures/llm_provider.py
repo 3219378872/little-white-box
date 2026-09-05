@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 CANARY_TOOL = "assistant_capability_canary"
 RESET_MARKER = "E2E_STREAM_RESET_MARKER"
 RESEARCH_MARKER = "E2E_RESEARCH_MARKER"
+WATCH_MARKER = "UNTRUSTED_WATCH_HITS_JSON"
 
 
 class FixtureState:
@@ -61,6 +62,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if RESEARCH_MARKER in serialized:
             self._research(body)
+            return
+        if WATCH_MARKER in serialized:
+            self._watch(body)
             return
         if self.server.strict and RESET_MARKER not in serialized:
             self._json({"error": {"message": "fixture only serves marked test requests"}}, status=503)
@@ -145,18 +149,7 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _research(self, body):
-        inputs = body.get("input") or []
-        scenario = {}
-        outputs = {}
-        for item in inputs:
-            content = item.get("content", "")
-            if isinstance(content, list):
-                content = "".join(part.get("text", "") for part in content)
-            if item.get("role") == "user" and RESEARCH_MARKER in content:
-                scenario = json.loads(content.split(RESEARCH_MARKER, 1)[1].strip())
-                outputs = {}
-            if item.get("type") == "function_call_output":
-                outputs[item.get("call_id")] = item.get("output", "")
+        scenario, outputs = self._marked_exchange(body, RESEARCH_MARKER)
         if "research-question" not in outputs:
             self._tool_response(body, "research-question", "ask_questions", {
                 "questions": [{"id": "priority", "text": "更关注哪方面？",
@@ -194,6 +187,64 @@ class Handler(BaseHTTPRequestHandler):
         else:
             block = {"kind": "limitation", "text": "社区资料不足，互联网检索暂时不可用，不能作出确定结论。", "citations": []}
         self._tool_response(body, "research-publish", "publish_answer", {"blocks": [block]})
+
+    def _watch(self, body):
+        watch, outputs = self._marked_exchange(body, WATCH_MARKER)
+        hits = watch.get("hits") or []
+        post_id = 0
+        if hits:
+            raw_post_id = hits[0].get("post_id_exact") or hits[0].get("post_id")
+            try:
+                post_id = int(raw_post_id)
+            except (TypeError, ValueError):
+                post_id = 0
+
+        if "watch-get-post" not in outputs and post_id > 0:
+            self._tool_response(body, "watch-get-post", "get_post", {
+                "post_id": post_id,
+            })
+            return
+
+        sources = self._sources(outputs.get("watch-get-post"))
+        if sources and sources[0].get("retrieved_evidence"):
+            source = sources[0]
+            evidence = source["retrieved_evidence"][0]
+            block = {
+                "kind": "fact",
+                "text": evidence["text"],
+                "citations": [{
+                    "handle": source["handle"],
+                    "evidenceIds": [evidence["id"]],
+                }],
+            }
+        else:
+            block = {
+                "kind": "limitation",
+                "text": "Watch 命中的帖子当前无法回源，暂不提供未经核实的内容。",
+                "citations": [],
+            }
+        self._tool_response(body, "watch-publish", "publish_answer", {
+            "blocks": [block],
+        })
+
+    @staticmethod
+    def _marked_exchange(body, marker):
+        payload = {}
+        outputs = {}
+        marker_seen = False
+        for item in body.get("input") or []:
+            content = item.get("content", "")
+            if isinstance(content, list):
+                content = "".join(part.get("text", "") for part in content)
+            if item.get("role") == "user" and marker in content:
+                raw = content.split(marker, 1)[1].lstrip(" :\r\n\t")
+                payload = json.loads(raw)
+                outputs = {}
+                marker_seen = True
+                continue
+            if marker_seen and item.get("type") == "function_call_output":
+                outputs[item.get("call_id")] = item.get("output", "")
+        return payload, outputs
 
     @staticmethod
     def _sources(raw):
