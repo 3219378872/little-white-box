@@ -25,6 +25,9 @@ REDIS_CONTAINER="${REDIS_CONTAINER:-xbh-redis}"
 LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"
 LOG_ROTATE_INTERVAL_SECONDS="${LOG_ROTATE_INTERVAL_SECONDS:-30}"
 AGENT_FIXTURE_PORT="${AGENT_FIXTURE_PORT:-39091}"
+ASSISTANT_AGENT_METRICS_PORT="${ASSISTANT_AGENT_METRICS_PORT:-9136}"
+ASSISTANT_AGENT_READY_TIMEOUT_SECONDS="${ASSISTANT_AGENT_READY_TIMEOUT_SECONDS:-180}"
+ASSISTANT_AGENT_READY_LINE="Assistant agent worker started"
 AGENT_FIXTURE_RESTORE=0
 APP_LIFECYCLE_LOCK="${APP_LIFECYCLE_LOCK:-$RUN_DIR/app-lifecycle.lock}"
 APP_LIFECYCLE_LOCK_FD=""
@@ -66,6 +69,26 @@ compose() {
     "$@"
 }
 
+normalize_assistant_agent_metrics_port() {
+  local port="${ASSISTANT_AGENT_METRICS_PORT:-}"
+  if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] ||
+    ((10#$port < 1 || 10#$port > 65535)); then
+    echo "invalid assistant-agent metrics port: $port" >&2
+    return 1
+  fi
+  ASSISTANT_AGENT_METRICS_PORT="$((10#$port))"
+}
+
+assistant_agent_metrics_config_matches() {
+  local file="$1" port="$2"
+  awk -v expected_port="$port" '
+    /^Prometheus:$/ { inside = 1; next }
+    inside && /^[^[:space:]]/ { inside = 0 }
+    inside && $1 == "Port:" && $2 == expected_port { port_matches = 1 }
+    END { exit !port_matches }
+  ' "$file"
+}
+
 load_env() {
   local file="" env_status
   if [[ -f "$ENV_FILE" ]]; then
@@ -86,6 +109,7 @@ load_env() {
   fi
   set +a
   [[ "$env_status" -eq 0 ]] || return "$env_status"
+  normalize_assistant_agent_metrics_port || return $?
   export ASSISTANT_LLM_MODEL_SMALL="${ASSISTANT_LLM_MODEL_SMALL:-}"
   export ASSISTANT_LLM_REVIEW_MODEL="${ASSISTANT_LLM_REVIEW_MODEL:-}"
   export ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
@@ -175,6 +199,7 @@ clear_sensitive_assistant_logs() {
       : >"$logfile" || return $?
       chmod 600 "$logfile" || return $?
     fi
+    rm -f "$logfile.1.gz" || return $?
   done
 }
 
@@ -378,21 +403,35 @@ wipe_legacy_assistant_redis() {
 }
 
 prepare_etc() {
+  normalize_assistant_agent_metrics_port || return $?
   mkdir -p "$ETC_DIR" || return $?
   (
     cd "$BACKEND" || exit $?
     find app -path '*/etc/*.yaml' -print0
   ) | while IFS= read -r -d '' rel; do
+    local -a sed_args=(
+      -e 's/ListenOn: 0\.0\.0\.0:/ListenOn: 127.0.0.1:/'
+      -e '/^DevServer:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}'
+      -e '/^RestConf:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}'
+    )
     mkdir -p "$ETC_DIR/$(dirname "$rel")" || exit $?
     # Dev copies bind everything to loopback: RPC ListenOn (etcd registration
     # must stay reachable from the host gateway), the gateway REST listener
-    # (RestConf) and the DevServer metrics/pprof HTTP endpoints, which would
-    # otherwise listen on all interfaces. Sub-repo yaml files are never
-    # modified.
-    sed -e 's/ListenOn: 0\.0\.0\.0:/ListenOn: 127.0.0.1:/' \
-        -e '/^DevServer:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}' \
-        -e '/^RestConf:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}' \
-        "$BACKEND/$rel" >"$ETC_DIR/$rel" || exit $?
+    # (RestConf), and the DevServer diagnostics endpoints. The agent
+    # Prometheus port is configurable here and in readiness/status as one
+    # value. Sub-repo yaml files are never modified.
+    if [[ "$rel" == "app/assistant/worker/etc/agent.yaml" ]]; then
+      sed_args+=(
+        -e "/^Prometheus:/,/^[^ ]/{s/^\\([[:space:]]*\\)Port: [0-9][0-9]*/\\1Port: $ASSISTANT_AGENT_METRICS_PORT/}"
+      )
+    fi
+    sed "${sed_args[@]}" "$BACKEND/$rel" >"$ETC_DIR/$rel" || exit $?
+    if [[ "$rel" == "app/assistant/worker/etc/agent.yaml" ]] &&
+      ! assistant_agent_metrics_config_matches \
+        "$ETC_DIR/$rel" "$ASSISTANT_AGENT_METRICS_PORT"; then
+      echo "failed to configure assistant-agent Prometheus endpoint" >&2
+      exit 1
+    fi
   done
 }
 
@@ -587,6 +626,10 @@ pid_owner_file() {
   printf '%s.owner\n' "$1"
 }
 
+pid_ready_file() {
+  printf '%s.ready\n' "$1"
+}
+
 read_service_pidfile() {
   local pidfile="$1" pid=""
   [[ -f "$pidfile" && ! -L "$pidfile" ]] || return 1
@@ -754,10 +797,12 @@ managed_process_group_matches() {
 }
 
 remove_service_state() {
-  local pidfile="$1" owner
+  local pidfile="$1" owner ready
   owner="$(pid_owner_file "$pidfile")"
+  ready="$(pid_ready_file "$pidfile")"
   rm -f "$pidfile" || return $?
-  rm -f "$owner"
+  rm -f "$owner" || return $?
+  rm -f "$ready"
 }
 
 remove_stale_service_state() {
@@ -1212,8 +1257,9 @@ track_app_started_service() {
 }
 
 prepare_service_start_state() {
-  local name="$1" pidfile="$2" pid="" owner
+  local name="$1" pidfile="$2" pid="" owner ready
   owner="$(pid_owner_file "$pidfile")"
+  ready="$(pid_ready_file "$pidfile")"
   if pid="$(read_service_pidfile "$pidfile" 2>/dev/null)"; then
     if managed_process_group_matches "$name" "$pid" "$pidfile"; then
       echo "stopping orphaned $name process group before restart (group=$pid)" >&2
@@ -1226,7 +1272,8 @@ prepare_service_start_state() {
       return 1
     fi
   fi
-  if [[ -e "$pidfile" || -L "$pidfile" || -e "$owner" || -L "$owner" ]]; then
+  if [[ -e "$pidfile" || -L "$pidfile" || -e "$owner" || -L "$owner" ||
+    -e "$ready" || -L "$ready" ]]; then
     remove_stale_service_state "$name" "$pidfile" || return $?
   fi
 }
@@ -1287,6 +1334,123 @@ cleanup_failed_service_start() {
   return "$stop_status"
 }
 
+assistant_agent_launch_matches() {
+  local pid="$1" token="$2" pidfile="$PID_DIR/assistant-agent.pid"
+  local current_pid current_token
+  current_pid="$(read_service_pidfile "$pidfile" 2>/dev/null)" || return 1
+  [[ "$current_pid" == "$pid" ]] || return 1
+  current_token="$(read_service_owner_token assistant-agent "$pidfile" 2>/dev/null)" || return 1
+  [[ "$current_token" == "$token" ]] || return 1
+  service_process_matches assistant-agent "$pid" || return 1
+  process_has_owner_token "$pid" "$token"
+}
+
+process_listens_on_port() {
+  if listening_port_owner_state "$1" "$2"; then
+    return 0
+  fi
+  return 1
+}
+
+# Returns 0 when expected_pid is among the listeners, 1 while no listener PID
+# is observable yet, and 2 when the port is explicitly owned by another PID.
+listening_port_owner_state() {
+  local expected_pid="$1" port="$2" pid found=0
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    found=1
+    [[ "$pid" == "$expected_pid" ]] && return 0
+  done < <(listening_port_pids "$port")
+  [[ "$found" -eq 0 ]] && return 1
+  return 2
+}
+
+record_assistant_agent_ready() {
+  local pid="$1" token="$2" pidfile="$PID_DIR/assistant-agent.pid"
+  local ready ready_tmp status=0
+  ready="$(pid_ready_file "$pidfile")"
+  ready_tmp="$ready.tmp.$BASHPID.$RANDOM"
+  printf '%s\n%s\n' "$pid" "$token" >"$ready_tmp" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    chmod 600 "$ready_tmp" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    mv -f "$ready_tmp" "$ready" || status=$?
+  fi
+  if [[ "$status" -ne 0 ]]; then
+    rm -f "$ready_tmp" 2>/dev/null || true
+  fi
+  return "$status"
+}
+
+assistant_agent_ready_matches() {
+  local pid="$1" token="$2" pidfile="$PID_DIR/assistant-agent.pid"
+  local ready recorded_pid="" recorded_token=""
+  ready="$(pid_ready_file "$pidfile")"
+  [[ -f "$ready" && ! -L "$ready" ]] || return 1
+  {
+    IFS= read -r recorded_pid
+    IFS= read -r recorded_token
+  } <"$ready" || return 1
+  [[ "$recorded_pid" == "$pid" && "$recorded_token" == "$token" ]] || return 1
+  assistant_agent_launch_matches "$pid" "$token" || return 1
+  process_listens_on_port "$pid" "$ASSISTANT_AGENT_METRICS_PORT" || return 1
+  assistant_agent_launch_matches "$pid" "$token"
+}
+
+# go-zero launches the Prometheus server goroutine before the worker constructs
+# its ServiceContext, but the listener may bind later. Bind readiness to this
+# launch's immutable pid/token and the post-canary marker, then verify that the
+# same process owns the metrics listener.
+wait_assistant_agent_ready() {
+  local pid="$1" token="$2" logfile="$3"
+  local timeout="${4:-${ASSISTANT_AGENT_READY_TIMEOUT_SECONDS:-180}}"
+  local label="${5:-assistant-agent}"
+  local i iterations listener_status publish_status
+  normalize_assistant_agent_metrics_port || return $?
+  if [[ ! "$timeout" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid assistant-agent readiness timeout: $timeout" >&2
+    return 1
+  fi
+  iterations=$((timeout * 10))
+  for ((i = 0; i < iterations; i++)); do
+    if ! assistant_agent_launch_matches "$pid" "$token"; then
+      echo "$label exited or changed identity before readiness" >&2
+      return 1
+    fi
+    if grep -Fqx -- "$ASSISTANT_AGENT_READY_LINE" "$logfile" 2>/dev/null; then
+      if listening_port_owner_state "$pid" "$ASSISTANT_AGENT_METRICS_PORT"; then
+        if ! assistant_agent_launch_matches "$pid" "$token"; then
+          echo "$label changed identity while publishing readiness" >&2
+          return 1
+        fi
+        if record_assistant_agent_ready "$pid" "$token"; then
+          :
+        else
+          publish_status=$?
+          echo "failed to record $label readiness" >&2
+          return "$publish_status"
+        fi
+        if assistant_agent_ready_matches "$pid" "$token"; then
+          echo "ready: $label"
+          return 0
+        fi
+        echo "$label lost verified readiness while publishing readiness" >&2
+        return 1
+      else
+        listener_status=$?
+      fi
+      if [[ "$listener_status" -eq 2 ]]; then
+        echo "$label metrics listener on :$ASSISTANT_AGENT_METRICS_PORT is not owned by pid $pid" >&2
+        return 1
+      fi
+    fi
+    sleep 0.1 || return $?
+  done
+  echo "timeout waiting for $label post-canary readiness" >&2
+  return 1
+}
+
 start_svc() {
   local name="$1" workdir="$2" bin="$3"
   shift 3
@@ -1294,11 +1458,19 @@ start_svc() {
   local logfile="$LOG_DIR/$name.log"
   local bindir="$RUN_DIR/bin"
   local executable="$bindir/$name"
-  local pid build_status token cleanup_status=0
+  local pid build_status token ready_status cleanup_status=0
   secure_runtime_paths || return $?
   touch "$logfile" || return $?
   chmod 600 "$logfile" || return $?
   if pid="$(validated_service_pid "$name" "$pidfile")"; then
+    if [[ "$name" == "assistant-agent" ]]; then
+      normalize_assistant_agent_metrics_port || return $?
+      token="$(read_service_owner_token "$name" "$pidfile")" || return $?
+      if ! assistant_agent_ready_matches "$pid" "$token"; then
+        echo "assistant-agent pid=$pid is running without verified post-canary readiness; restart it" >&2
+        return 1
+      fi
+    fi
     echo "already running: $name pid=$pid"
     return 0
   fi
@@ -1314,6 +1486,11 @@ start_svc() {
   fi
   [[ "$build_status" -eq 0 ]] || return "$build_status"
   mv -f "$executable.tmp" "$executable" || return $?
+  if [[ "$name" == "assistant-agent" ]]; then
+    : >"$logfile" || return $?
+    chmod 600 "$logfile" || return $?
+    rm -f "$logfile.1.gz" || return $?
+  fi
   echo "starting $name"
   token="$(new_managed_process_token "$name")" || return $?
   (
@@ -1337,6 +1514,21 @@ start_svc() {
     echo "$name exited during startup; see $logfile" >&2
     [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
     return 1
+  fi
+  if [[ "$name" == "assistant-agent" ]]; then
+    if wait_assistant_agent_ready "$pid" "$token" "$logfile"; then
+      :
+    else
+      ready_status=$?
+      if cleanup_failed_service_start "$name" "$pid" "$pidfile" "$token"; then
+        :
+      else
+        cleanup_status=$?
+      fi
+      echo "$name failed post-canary readiness; see $logfile" >&2
+      [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
+      return "$ready_status"
+    fi
   fi
   track_app_started_service "$name"
 }
@@ -1442,8 +1634,9 @@ stop_tree() {
 stop_svc() {
   local name="$1"
   local pidfile="$PID_DIR/$name.pid"
-  local pid="" owner stop_status
+  local pid="" owner ready stop_status
   owner="$(pid_owner_file "$pidfile")"
+  ready="$(pid_ready_file "$pidfile")"
   if pid="$(validated_service_pid "$name" "$pidfile")"; then
     echo "stopping $name pid=$pid"
     if stop_tree "$name" "$pid"; then
@@ -1468,7 +1661,8 @@ stop_svc() {
     [[ -e "$owner" || -L "$owner" ]]; then
     echo "refusing to stop $name pid=$pid: owner token mismatch; keeping pidfile" >&2
     return 1
-  elif [[ -e "$pidfile" || -L "$pidfile" || -e "$owner" || -L "$owner" ]]; then
+  elif [[ -e "$pidfile" || -L "$pidfile" || -e "$owner" || -L "$owner" ||
+    -e "$ready" || -L "$ready" ]]; then
     remove_stale_service_state "$name" "$pidfile" || return $?
     return 0
   else
@@ -1513,7 +1707,7 @@ restore_agent_after_fixture() {
     can_start=0
   fi
   if [[ "$can_start" == "1" ]] && row="$(assistant_agent_row)"; then
-    if ! start_row "$row" || ! wait_port 127.0.0.1 9136 120 assistant-agent-restored; then
+    if ! start_row "$row"; then
       echo "failed to restore assistant-agent; run just app-up" >&2
       [[ "$restore_status" -ne 0 ]] || restore_status=1
     fi
@@ -1544,7 +1738,6 @@ run_agent_reset_test_with_fixture() {
     export ASSISTANT_LLM_FALLBACK_ENABLED=false
     start_row "$agent_row"
   ) || return $?
-  wait_port 127.0.0.1 9136 60 assistant-agent-fixture || return $?
   E2E_EXPECT_ASSISTANT_RESET=1 PYTHONDONTWRITEBYTECODE=1 \
     python3 -m pytest -v \
     "$ROOT/deploy/dev/e2e/test_assistant.py::test_agent_stream_reset_replay"
@@ -2049,9 +2242,19 @@ pid_state() {
     printf '%-18s %s\n' "$name" "no-pid"
     return
   fi
-  local pid
+  local pid token
   if pid="$(validated_service_pid "$name" "$pidfile")"; then
-    printf '%-18s alive pid=%s\n' "$name" "$pid"
+    if [[ "$name" == "assistant-agent" ]]; then
+      token="$(read_service_owner_token "$name" "$pidfile" 2>/dev/null || true)"
+      if [[ -n "$token" ]] && normalize_assistant_agent_metrics_port &&
+        assistant_agent_ready_matches "$pid" "$token"; then
+        printf '%-18s alive ready pid=%s\n' "$name" "$pid"
+      else
+        printf '%-18s alive UNREADY pid=%s\n' "$name" "$pid"
+      fi
+    else
+      printf '%-18s alive pid=%s\n' "$name" "$pid"
+    fi
   elif pid="$(read_service_pidfile "$pidfile" 2>/dev/null)" &&
     managed_process_group_matches "$name" "$pid" "$pidfile"; then
     printf '%-18s ORPHAN group=%s\n' "$name" "$pid"
@@ -2061,6 +2264,7 @@ pid_state() {
 }
 
 stack_status_locked() {
+  normalize_assistant_agent_metrics_port || return $?
   echo "== containers =="
   compose ps --format 'table {{.Name}}\t{{.Service}}\t{{.Status}}' || true
   if docker inspect "$PROXY_NAME" >/dev/null 2>&1; then
@@ -2081,7 +2285,8 @@ stack_status_locked() {
   printf ':%s gw     %s\n' "$GATEWAY_PORT" "$(http_code "http://127.0.0.1:$GATEWAY_PORT/")"
   printf ':%s front  %s\n' "$FRONT_PORT" "$(http_code "http://127.0.0.1:$FRONT_PORT/")"
   printf ':3100 loki  %s\n' "$(http_code "http://127.0.0.1:3100/ready")"
-  printf ':9136 agent %s\n' "$(http_code "http://127.0.0.1:9136/metrics")"
+  printf ':%s agent %s\n' "$ASSISTANT_AGENT_METRICS_PORT" \
+    "$(http_code "http://127.0.0.1:$ASSISTANT_AGENT_METRICS_PORT/metrics")"
 }
 
 stack_status() {

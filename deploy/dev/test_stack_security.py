@@ -247,6 +247,98 @@ builtin printf 'status=%s\n' "$status"
 
 
 class StackLifecycleTest(unittest.TestCase):
+    def test_prepare_etc_binds_diagnostics_and_sets_agent_metrics_port(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            backend = temp / "backend"
+            agent_config = (
+                backend / "app" / "assistant" / "worker" / "etc" / "agent.yaml"
+            )
+            mq_config = backend / "app" / "search" / "mq" / "etc" / "search.yaml"
+            agent_config.parent.mkdir(parents=True)
+            mq_config.parent.mkdir(parents=True)
+            agent_config.write_text(
+                "Name: assistant-agent\n"
+                "Prometheus:\n"
+                "  Host: 0.0.0.0\n"
+                "  Port: 9136\n",
+                encoding="utf-8",
+            )
+            mq_config.write_text(
+                "Name: search-mq\n"
+                "Prometheus:\n"
+                "  Host: 0.0.0.0\n"
+                "  Port: 9133\n",
+                encoding="utf-8",
+            )
+            etc_dir = temp / "etc"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export BACKEND={shlex.quote(str(backend))}
+export ETC_DIR={shlex.quote(str(etc_dir))}
+export ASSISTANT_AGENT_METRICS_PORT=01936
+source {shlex.quote(str(STACK))}
+prepare_etc
+"""
+            run_bash(script)
+
+            rendered_agent = (
+                etc_dir / "app" / "assistant" / "worker" / "etc" / "agent.yaml"
+            ).read_text(encoding="utf-8")
+            rendered_mq = (
+                etc_dir / "app" / "search" / "mq" / "etc" / "search.yaml"
+            ).read_text(encoding="utf-8")
+            self.assertIn("  Host: 0.0.0.0", rendered_agent)
+            self.assertIn("  Port: 1936", rendered_agent)
+            self.assertIn("  Host: 0.0.0.0", rendered_mq)
+            self.assertIn("  Port: 9133", rendered_mq)
+            self.assertIn("  Host: 0.0.0.0", agent_config.read_text())
+
+    def test_prepare_etc_rejects_invalid_agent_metrics_port(self):
+        for port in ("0", "65536", "not-a-port"):
+            with self.subTest(port=port), tempfile.TemporaryDirectory() as tmp_dir:
+                script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export ETC_DIR={shlex.quote(str(Path(tmp_dir) / 'etc'))}
+export ASSISTANT_AGENT_METRICS_PORT={shlex.quote(port)}
+source {shlex.quote(str(STACK))}
+prepare_etc
+"""
+                result = run_bash(script, check=False)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid assistant-agent metrics port", result.stderr)
+
+    def test_prepare_etc_rejects_unrewritten_agent_metrics_config(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            backend = temp / "backend"
+            agent_config = (
+                backend / "app" / "assistant" / "worker" / "etc" / "agent.yaml"
+            )
+            agent_config.parent.mkdir(parents=True)
+            agent_config.write_text(
+                "Name: assistant-agent\n"
+                "Prometheus:\n"
+                "  Host: 0.0.0.0\n"
+                "  Port: ${AGENT_METRICS_PORT}\n",
+                encoding="utf-8",
+            )
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export BACKEND={shlex.quote(str(backend))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
+source {shlex.quote(str(STACK))}
+prepare_etc
+"""
+            result = run_bash(script, check=False)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "failed to configure assistant-agent Prometheus endpoint",
+                result.stderr,
+            )
+
     def test_canonical_path_fails_when_parent_directory_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             missing = Path(tmp_dir) / "missing" / "gateway"
@@ -281,6 +373,28 @@ pid_state gateway
             self.assertEqual(
                 owner.read_text(encoding="ascii"), "gateway:stale-token\n"
             )
+
+    def test_pid_state_distinguishes_agent_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pid_dir = Path(tmp_dir) / "pids"
+            pid_dir.mkdir()
+            (pid_dir / "assistant-agent.pid").write_text("4242\n", encoding="ascii")
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export PID_DIR={shlex.quote(str(pid_dir))}
+source {shlex.quote(str(STACK))}
+validated_service_pid() {{ builtin printf '%s\n' 4242; }}
+read_service_owner_token() {{ builtin printf '%s\n' 'assistant-agent:test:token:1'; }}
+assistant_agent_ready_matches() {{ [[ "$TEST_READY" == 1 ]]; }}
+TEST_READY=1
+pid_state assistant-agent
+TEST_READY=0
+pid_state assistant-agent
+"""
+            result = run_bash(script)
+
+            self.assertIn("assistant-agent    alive ready pid=4242", result.stdout)
+            self.assertIn("assistant-agent    alive UNREADY pid=4242", result.stdout)
 
     def test_pid_record_publishes_pid_and_owner_without_temp_files(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -503,6 +617,275 @@ builtin printf 'status=%s\n' "$status"
                 "assistant-agent is not running after application startup",
                 result.stderr,
             )
+
+    def test_agent_readiness_waits_for_exact_post_canary_marker(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            pid_dir = temp / "pids"
+            pid_dir.mkdir()
+            logfile = temp / "assistant-agent.log"
+            logfile.write_text(
+                "Assistant agent worker starting\n"
+                "Assistant agent worker started later\n",
+                encoding="utf-8",
+            )
+            token = "assistant-agent:test:token:1"
+            pidfile = pid_dir / "assistant-agent.pid"
+            pidfile.write_text("4242\n", encoding="ascii")
+            Path(f"{pidfile}.owner").write_text(f"{token}\n", encoding="ascii")
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export PID_DIR={shlex.quote(str(pid_dir))}
+export ASSISTANT_AGENT_METRICS_PORT=19136
+export TEST_LOG={shlex.quote(str(logfile))}
+source {shlex.quote(str(STACK))}
+service_process_matches() {{ [[ "$1" == assistant-agent && "$2" == 4242 ]]; }}
+process_has_owner_token() {{ [[ "$1" == 4242 && "$2" == {shlex.quote(token)} ]]; }}
+listening_port_pids() {{
+  [[ "$1" == 19136 ]] || return 81
+  builtin printf '%s\n' 4242
+}}
+sleep_calls=0
+sleep() {{
+  sleep_calls=$((sleep_calls + 1))
+  if [[ "$sleep_calls" -eq 2 ]]; then
+    builtin printf '%s\n' "$ASSISTANT_AGENT_READY_LINE" >>"$TEST_LOG"
+  fi
+}}
+wait_assistant_agent_ready 4242 {shlex.quote(token)} "$TEST_LOG" 1 delayed-agent
+builtin printf 'sleep_calls=%s\n' "$sleep_calls"
+"""
+            result = run_bash(script)
+
+            self.assertIn("ready: delayed-agent", result.stdout)
+            self.assertIn("sleep_calls=2", result.stdout)
+            ready = Path(f"{pidfile}.ready")
+            self.assertEqual(ready.read_text(encoding="ascii"), f"4242\n{token}\n")
+            self.assertEqual(stat.S_IMODE(ready.stat().st_mode), 0o600)
+
+    def test_agent_readiness_fails_closed_when_owner_token_changes(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            pid_dir = temp / "pids"
+            pid_dir.mkdir()
+            logfile = temp / "assistant-agent.log"
+            logfile.write_text("not ready yet\n", encoding="utf-8")
+            token = "assistant-agent:test:token:1"
+            pidfile = pid_dir / "assistant-agent.pid"
+            owner = Path(f"{pidfile}.owner")
+            pidfile.write_text("4242\n", encoding="ascii")
+            owner.write_text(f"{token}\n", encoding="ascii")
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export PID_DIR={shlex.quote(str(pid_dir))}
+export TEST_LOG={shlex.quote(str(logfile))}
+export TEST_OWNER={shlex.quote(str(owner))}
+source {shlex.quote(str(STACK))}
+service_process_matches() {{ return 0; }}
+process_has_owner_token() {{ [[ "$2" == {shlex.quote(token)} ]]; }}
+sleep() {{
+  builtin printf '%s\n' 'assistant-agent:replacement:token:2' >"$TEST_OWNER"
+  builtin printf '%s\n' "$ASSISTANT_AGENT_READY_LINE" >>"$TEST_LOG"
+}}
+set +e
+wait_assistant_agent_ready 4242 {shlex.quote(token)} "$TEST_LOG" 1 changed-agent
+status=$?
+set -e
+builtin printf 'status=%s\n' "$status"
+"""
+            result = run_bash(script)
+
+            self.assertIn("status=1", result.stdout)
+            self.assertIn("exited or changed identity", result.stderr)
+            self.assertFalse(Path(f"{pidfile}.ready").exists())
+
+    def test_agent_readiness_rejects_foreign_metrics_listener_immediately(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            pid_dir = temp / "pids"
+            pid_dir.mkdir()
+            logfile = temp / "assistant-agent.log"
+            logfile.write_text(
+                "Assistant agent worker started\n", encoding="utf-8"
+            )
+            token = "assistant-agent:test:token:1"
+            pidfile = pid_dir / "assistant-agent.pid"
+            pidfile.write_text("4242\n", encoding="ascii")
+            Path(f"{pidfile}.owner").write_text(f"{token}\n", encoding="ascii")
+            slept = temp / "slept"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export PID_DIR={shlex.quote(str(pid_dir))}
+export TEST_SLEPT={shlex.quote(str(slept))}
+source {shlex.quote(str(STACK))}
+service_process_matches() {{ return 0; }}
+process_has_owner_token() {{ return 0; }}
+listening_port_pids() {{ builtin printf '%s\n' 9999; }}
+port_open() {{ return 0; }}
+sleep() {{ : >"$TEST_SLEPT"; }}
+set +e
+wait_assistant_agent_ready 4242 {shlex.quote(token)} {shlex.quote(str(logfile))} 1 foreign-agent
+status=$?
+set -e
+builtin printf 'status=%s\n' "$status"
+"""
+            result = run_bash(script)
+
+            self.assertIn("status=1", result.stdout)
+            self.assertIn("metrics listener", result.stderr)
+            self.assertFalse(slept.exists())
+            self.assertFalse(Path(f"{pidfile}.ready").exists())
+
+    def test_agent_readiness_retries_an_empty_listener_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logfile = Path(tmp_dir) / "assistant-agent.log"
+            logfile.write_text(
+                "Assistant agent worker started\n", encoding="utf-8"
+            )
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+source {shlex.quote(str(STACK))}
+assistant_agent_launch_matches() {{ return 0; }}
+listener_checks=0
+listening_port_owner_state() {{
+  listener_checks=$((listener_checks + 1))
+  [[ "$listener_checks" -gt 1 ]]
+}}
+record_assistant_agent_ready() {{ return 0; }}
+assistant_agent_ready_matches() {{ return 0; }}
+sleep_calls=0
+sleep() {{ sleep_calls=$((sleep_calls + 1)); }}
+wait_assistant_agent_ready 4242 'assistant-agent:test:token:1' {shlex.quote(str(logfile))} 1
+builtin printf 'listener_checks=%s sleep_calls=%s\n' "$listener_checks" "$sleep_calls"
+"""
+            result = run_bash(script)
+
+            self.assertIn("ready: assistant-agent", result.stdout)
+            self.assertIn("listener_checks=2 sleep_calls=1", result.stdout)
+
+    def test_agent_readiness_propagates_poll_sleep_failure(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            logfile = Path(tmp_dir) / "assistant-agent.log"
+            logfile.write_text("not ready\n", encoding="utf-8")
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+source {shlex.quote(str(STACK))}
+assistant_agent_launch_matches() {{ return 0; }}
+sleep() {{ return 77; }}
+set +e
+wait_assistant_agent_ready 4242 'assistant-agent:test:token:1' {shlex.quote(str(logfile))} 1
+status=$?
+set -e
+builtin printf 'status=%s\n' "$status"
+"""
+            result = run_bash(script)
+
+            self.assertIn("status=77", result.stdout)
+
+    def test_agent_already_running_requires_persisted_readiness(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            run_dir = temp / "run"
+            events = temp / "events"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export RUN_DIR={shlex.quote(str(run_dir))}
+export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
+export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
+export TEST_EVENTS={shlex.quote(str(events))}
+source {shlex.quote(str(STACK))}
+validated_service_pid() {{ builtin printf '%s\n' 4242; }}
+read_service_owner_token() {{ builtin printf '%s\n' 'assistant-agent:test:token:1'; }}
+assistant_agent_ready_matches() {{
+  builtin printf 'ready-check:%s:%s\n' "$1" "$2" >>"$TEST_EVENTS"
+  [[ "$TEST_READY" == 1 ]]
+}}
+go() {{ builtin printf '%s\n' build >>"$TEST_EVENTS"; return 91; }}
+TEST_READY=0
+set +e
+start_svc assistant-agent {shlex.quote(str(temp))} ./unused
+missing_status=$?
+set -e
+TEST_READY=1
+start_svc assistant-agent {shlex.quote(str(temp))} ./unused
+builtin printf 'missing=%s\n' "$missing_status"
+"""
+            result = run_bash(script)
+
+            self.assertIn("missing=1", result.stdout)
+            self.assertIn("already running: assistant-agent pid=4242", result.stdout)
+            self.assertIn("without verified post-canary readiness", result.stderr)
+            self.assertEqual(
+                events.read_text(encoding="utf-8").splitlines(),
+                [
+                    "ready-check:4242:assistant-agent:test:token:1",
+                    "ready-check:4242:assistant-agent:test:token:1",
+                ],
+            )
+
+    @unittest.skipUnless(Path("/proc/self/environ").exists(), "requires procfs")
+    def test_agent_readiness_failure_cleans_new_start_and_preserves_status(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            run_dir = temp / "run"
+            log_dir = run_dir / "logs"
+            log_dir.mkdir(parents=True)
+            logfile = log_dir / "assistant-agent.log"
+            logfile.write_text(
+                "Assistant agent worker started\n", encoding="utf-8"
+            )
+            rotated = Path(f"{logfile}.1.gz")
+            rotated.write_bytes(b"old-sensitive-log")
+            observed = temp / "observed"
+            sleep_binary = shutil.which("sleep") or "/bin/sleep"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export RUN_DIR={shlex.quote(str(run_dir))}
+export LOG_DIR={shlex.quote(str(log_dir))}
+export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
+export TEST_SLEEP_BINARY={shlex.quote(sleep_binary)}
+export TEST_OBSERVED={shlex.quote(str(observed))}
+source {shlex.quote(str(STACK))}
+go() {{
+  [[ "$1" == build && "$2" == -o ]] || return 90
+  command cp "$TEST_SLEEP_BINARY" "$3"
+}}
+validated_service_pid() {{
+  [[ -f "$2" ]] || return 1
+  read_service_pidfile "$2"
+}}
+new_managed_process_token() {{ builtin printf '%s\n' 'assistant-agent:test:token:1'; }}
+wait_assistant_agent_ready() {{
+  if grep -Fqx -- "$ASSISTANT_AGENT_READY_LINE" "$3" || [[ -e "$3.1.gz" ]]; then
+    return 62
+  fi
+  builtin printf '%s %s\n' "$1" "$2" >"$TEST_OBSERVED"
+  return 63
+}}
+set +e
+start_svc assistant-agent {shlex.quote(str(temp))} ./unused 300
+status=$?
+set -e
+builtin printf 'status=%s\n' "$status"
+"""
+            result = run_bash(script)
+
+            self.assertIn("status=63", result.stdout)
+            self.assertIn("failed post-canary readiness", result.stderr)
+            pid_text, observed_token = observed.read_text(encoding="ascii").split()
+            self.assertEqual(observed_token, "assistant-agent:test:token:1")
+            self.assertFalse(process_is_running(int(pid_text)))
+            self.assertFalse((run_dir / "pids" / "assistant-agent.pid").exists())
+            self.assertFalse(
+                (run_dir / "pids" / "assistant-agent.pid.owner").exists()
+            )
+            self.assertFalse(
+                (run_dir / "pids" / "assistant-agent.pid.ready").exists()
+            )
+            self.assertEqual(logfile.read_text(encoding="utf-8"), "")
+            self.assertFalse(rotated.exists())
 
     def test_middleware_up_stops_at_first_locked_callback_failure(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1159,6 +1542,24 @@ stop_svc gateway
                 owner.read_text(encoding="ascii"), "gateway:test:token:1\n"
             )
 
+    def test_stop_service_removes_orphaned_readiness_state(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pid_dir = Path(tmp_dir) / "pids"
+            pid_dir.mkdir()
+            ready = pid_dir / "assistant-agent.pid.ready"
+            ready.write_text(
+                "4242\nassistant-agent:stale:token:1\n", encoding="ascii"
+            )
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export PID_DIR={shlex.quote(str(pid_dir))}
+source {shlex.quote(str(STACK))}
+stop_svc assistant-agent
+"""
+            run_bash(script)
+
+            self.assertFalse(ready.exists())
+
     def test_failed_start_cleanup_keeps_recovery_state_and_status(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             pidfile = Path(tmp_dir) / "gateway.pid"
@@ -1201,7 +1602,7 @@ stop_svc() {{
 ensure_assistant_db_env() {{ return 0; }}
 assistant_agent_row() {{ printf '%s\n' 'assistant-agent|row'; }}
 start_row() {{ printf 'start:%s\n' "${{1%%|*}}" >>"$TEST_EVENTS"; }}
-wait_port() {{ return 0; }}
+wait_port() {{ printf '%s\n' wait-port >>"$TEST_EVENTS"; }}
 set +e
 restore_agent_after_fixture
 status=$?
@@ -1215,6 +1616,29 @@ printf 'status=%s restore=%s\n' "$status" "$AGENT_FIXTURE_RESTORE"
             self.assertEqual(
                 recorded,
                 ["stop:assistant-agent", "stop:llm-fixture", "start:assistant-agent"],
+            )
+
+    def test_agent_fixture_start_delegates_readiness_to_start_row(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            events = Path(tmp_dir) / "events"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export TEST_EVENTS={shlex.quote(str(events))}
+source {shlex.quote(str(STACK))}
+stop_svc() {{ builtin printf 'stop:%s\n' "$1" >>"$TEST_EVENTS"; }}
+start_row() {{ builtin printf 'start:%s\n' "${{1%%|*}}" >>"$TEST_EVENTS"; }}
+wait_port() {{ builtin printf '%s\n' wait-port >>"$TEST_EVENTS"; }}
+python3() {{ builtin printf 'pytest:%s\n' "$*" >>"$TEST_EVENTS"; }}
+run_agent_reset_test_with_fixture 'assistant-agent|row'
+"""
+            run_bash(script)
+
+            recorded = events.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(recorded[0:2], ["stop:assistant-agent", "start:assistant-agent"])
+            self.assertTrue(recorded[2].startswith("pytest:-m pytest -v "))
+            self.assertNotIn("wait-port", recorded)
+            self.assertNotIn(
+                "wait_port 127.0.0.1 9136", STACK.read_text(encoding="utf-8")
             )
 
     def test_agent_reset_restores_inside_lock_and_preserves_setup_failure(self):
@@ -1280,7 +1704,7 @@ printf 'status=%s\n' "$status"
 
         self.assertEqual(stack.count("record_started_pid "), 4)
         self.assertEqual(stack.count("close_app_lifecycle_lock_fd || exit $?"), 4)
-        self.assertEqual(stack.count("cleanup_failed_service_start "), 4)
+        self.assertEqual(stack.count("cleanup_failed_service_start "), 5)
         for validation in (
             'if ! validated_service_pid "$name" "$pidfile" >/dev/null; then',
             'if ! validated_service_pid log-maintainer "$pidfile" >/dev/null; then',
