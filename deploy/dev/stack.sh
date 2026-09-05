@@ -26,6 +26,11 @@ LOG_MAX_BYTES="${LOG_MAX_BYTES:-5242880}"
 LOG_ROTATE_INTERVAL_SECONDS="${LOG_ROTATE_INTERVAL_SECONDS:-30}"
 AGENT_FIXTURE_PORT="${AGENT_FIXTURE_PORT:-39091}"
 AGENT_FIXTURE_RESTORE=0
+APP_LIFECYCLE_LOCK="${APP_LIFECYCLE_LOCK:-$RUN_DIR/app-lifecycle.lock}"
+APP_LIFECYCLE_LOCK_FD=""
+MANAGED_PROCESS_TOKEN_ENV="XBH_STACK_PROCESS_TOKEN"
+APP_UP_TRACK_STARTS=0
+APP_UP_STARTED_SERVICES=()
 
 RPC_SERVICES=(
   "user-rpc|$BACKEND|./app/user/rpc|-f|$ETC_DIR/app/user/rpc/etc/user.yaml"
@@ -62,7 +67,7 @@ compose() {
 }
 
 load_env() {
-  local file=""
+  local file="" env_status
   if [[ -f "$ENV_FILE" ]]; then
     file="$ENV_FILE"
   elif [[ -f "$LOCAL_ENV" ]]; then
@@ -71,11 +76,16 @@ load_env() {
     echo "missing env file: $ENV_FILE or $LOCAL_ENV" >&2
     return 1
   fi
-  chmod 600 "$file"
+  chmod 600 "$file" || return $?
   set -a
   # shellcheck disable=SC1090
-  source "$file"
+  if source "$file"; then
+    env_status=0
+  else
+    env_status=$?
+  fi
   set +a
+  [[ "$env_status" -eq 0 ]] || return "$env_status"
   export ASSISTANT_LLM_MODEL_SMALL="${ASSISTANT_LLM_MODEL_SMALL:-}"
   export ASSISTANT_LLM_REVIEW_MODEL="${ASSISTANT_LLM_REVIEW_MODEL:-}"
   export ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
@@ -93,14 +103,68 @@ load_env() {
   export ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
   export ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS:-0}"
   export ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS:-0}"
-  ensure_assistant_db_env
+  ensure_assistant_db_env || return $?
   validate_dev_db_env
 }
 
 secure_runtime_paths() {
-  install -d -m 700 "$RUN_DIR" "$LOG_DIR" "$PID_DIR" "$RUN_DIR/bin" "$ETC_DIR"
+  install -d -m 700 "$RUN_DIR" "$LOG_DIR" "$PID_DIR" "$RUN_DIR/bin" "$ETC_DIR" || return $?
   find "$LOG_DIR" -maxdepth 1 -type f -name '*.log*' -exec chmod 600 {} + 2>/dev/null || true
   find "$PID_DIR" -maxdepth 1 -type f -name '*.pid' -exec chmod 600 {} + 2>/dev/null || true
+}
+
+with_app_lifecycle_lock() {
+  local mode="$1" callback="$2" lock_fd status unlock_status=0
+  local previous_lock_fd="${APP_LIFECYCLE_LOCK_FD:-}"
+  shift 2
+  secure_runtime_paths || return $?
+  command -v flock >/dev/null 2>&1 || {
+    echo "flock is required for application lifecycle operations" >&2
+    return 1
+  }
+  exec {lock_fd}>"$APP_LIFECYCLE_LOCK" || return $?
+  chmod 600 "$APP_LIFECYCLE_LOCK" || {
+    status=$?
+    exec {lock_fd}>&-
+    return "$status"
+  }
+  if [[ "$mode" == "shared" ]]; then
+    flock -s "$lock_fd" || {
+      status=$?
+      exec {lock_fd}>&-
+      return "$status"
+    }
+  else
+    flock -x "$lock_fd" || {
+      status=$?
+      exec {lock_fd}>&-
+      return "$status"
+    }
+  fi
+
+  APP_LIFECYCLE_LOCK_FD="$lock_fd"
+  if "$callback" "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  APP_LIFECYCLE_LOCK_FD="$previous_lock_fd"
+  flock -u "$lock_fd" || unlock_status=$?
+  exec {lock_fd}>&-
+  if [[ "$status" -ne 0 ]]; then
+    return "$status"
+  fi
+  return "$unlock_status"
+}
+
+close_app_lifecycle_lock_fd() {
+  [[ -n "${APP_LIFECYCLE_LOCK_FD:-}" ]] || return 0
+  [[ "$APP_LIFECYCLE_LOCK_FD" =~ ^[0-9]+$ ]] || {
+    echo "invalid application lifecycle lock fd: $APP_LIFECYCLE_LOCK_FD" >&2
+    return 1
+  }
+  exec {APP_LIFECYCLE_LOCK_FD}>&-
+  APP_LIFECYCLE_LOCK_FD=""
 }
 
 clear_sensitive_assistant_logs() {
@@ -108,8 +172,8 @@ clear_sensitive_assistant_logs() {
   for name in assistant-rpc assistant-watch assistant-agent; do
     logfile="$LOG_DIR/$name.log"
     if [[ -e "$logfile" && ! -L "$logfile" ]]; then
-      : >"$logfile"
-      chmod 600 "$logfile"
+      : >"$logfile" || return $?
+      chmod 600 "$logfile" || return $?
     fi
   done
 }
@@ -174,7 +238,7 @@ random_hex_secret() {
 # gateways and all non-DB settings are copied byte-for-byte. DB DSN hosts,
 # schemas and query strings are preserved while credentials become references
 # to the new app variables. Values are never printed.
-rotate_dev_db_credentials() {
+rotate_dev_db_credentials_locked() {
   local file=""
   if [[ -f "$ENV_FILE" ]]; then
     file="$ENV_FILE"
@@ -188,7 +252,7 @@ rotate_dev_db_credentials() {
     echo "dev env must be a regular non-symlink file" >&2
     return 1
   fi
-  chmod 600 "$file"
+  chmod 600 "$file" || return $?
 
   local app_user="xbh_app" e2e_user="xbh_e2e" app_pass e2e_pass tmp
   app_pass="$(random_hex_secret)" || return 1
@@ -198,14 +262,19 @@ rotate_dev_db_credentials() {
     return 1
   fi
 
-  tmp="$(mktemp "$(dirname "$file")/.xbh-dev-env.XXXXXX")"
-  chmod 600 "$tmp"
-  local line key value quote dsn_tail saw_content=0
-  {
-    printf 'APP_MYSQL_USER=%s\n' "$app_user"
-    printf 'APP_MYSQL_PASSWORD=%s\n' "$app_pass"
-    printf 'E2E_MYSQL_USER=%s\n' "$e2e_user"
-    printf 'E2E_MYSQL_PASSWORD=%s\n' "$e2e_pass"
+  tmp="$(mktemp "$(dirname "$file")/.xbh-dev-env.XXXXXX")" || return $?
+  chmod 600 "$tmp" || {
+    local chmod_status=$?
+    rm -f "$tmp"
+    return "$chmod_status"
+  }
+  local write_status
+  if (
+    local line key value quote dsn_tail saw_content=0
+    printf 'APP_MYSQL_USER=%s\n' "$app_user" || exit $?
+    printf 'APP_MYSQL_PASSWORD=%s\n' "$app_pass" || exit $?
+    printf 'E2E_MYSQL_USER=%s\n' "$e2e_user" || exit $?
+    printf 'E2E_MYSQL_PASSWORD=%s\n' "$e2e_pass" || exit $?
     while IFS= read -r line || [[ -n "$line" ]]; do
       if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(APP_MYSQL_USER|APP_MYSQL_PASSWORD|E2E_MYSQL_USER|E2E_MYSQL_PASSWORD)[[:space:]]*= ]]; then
         continue
@@ -218,33 +287,42 @@ rotate_dev_db_credentials() {
         if [[ "$value" == \"*\" || "$value" == \'*\' ]]; then
           quote="${value:0:1}"
           if [[ "${value: -1}" != "$quote" ]]; then
-            rm -f "$tmp"
             echo "$key has an unterminated quoted DSN" >&2
-            return 1
+            exit 1
           fi
           value="${value:1:${#value}-2}"
         fi
         if [[ "$value" != *"@tcp("* || "$value" != *")/"* ]]; then
-          rm -f "$tmp"
           echo "$key is not a supported tcp MySQL DSN" >&2
-          return 1
+          exit 1
         fi
         dsn_tail="tcp(${value##*@tcp(}"
-        printf '%s="${APP_MYSQL_USER}:${APP_MYSQL_PASSWORD}@%s"\n' "$key" "$dsn_tail"
-        [[ "$key" == "DB_CONTENT" ]] && saw_content=1
+        printf '%s="${APP_MYSQL_USER}:${APP_MYSQL_PASSWORD}@%s"\n' "$key" "$dsn_tail" || exit $?
+        if [[ "$key" == "DB_CONTENT" ]]; then
+          saw_content=1
+        fi
         continue
       fi
-      printf '%s\n' "$line"
-    done <"$file"
-  } >"$tmp"
-  if [[ "$saw_content" != "1" ]]; then
-    rm -f "$tmp"
-    echo "DB_CONTENT is required before rotating MySQL credentials" >&2
-    return 1
+      printf '%s\n' "$line" || exit $?
+    done <"$file" || exit $?
+    if [[ "$saw_content" != "1" ]]; then
+      echo "DB_CONTENT is required before rotating MySQL credentials" >&2
+      exit 1
+    fi
+  ) >"$tmp"; then
+    :
+  else
+    write_status=$?
+    rm -f "$tmp" 2>/dev/null || true
+    return "$write_status"
   fi
-  mv -f "$tmp" "$file"
-  chmod 600 "$file"
+  mv -f "$tmp" "$file" || return $?
+  chmod 600 "$file" || return $?
   echo "rotated local app/e2e MySQL credentials in $file"
+}
+
+rotate_dev_db_credentials() {
+  with_app_lifecycle_lock exclusive rotate_dev_db_credentials_locked
 }
 
 # Old sync Assistant stored Redis sessions under assistant:v2*. The v3 runtime
@@ -300,12 +378,12 @@ wipe_legacy_assistant_redis() {
 }
 
 prepare_etc() {
-  mkdir -p "$ETC_DIR"
+  mkdir -p "$ETC_DIR" || return $?
   (
-    cd "$BACKEND"
+    cd "$BACKEND" || exit $?
     find app -path '*/etc/*.yaml' -print0
   ) | while IFS= read -r -d '' rel; do
-    mkdir -p "$ETC_DIR/$(dirname "$rel")"
+    mkdir -p "$ETC_DIR/$(dirname "$rel")" || exit $?
     # Dev copies bind everything to loopback: RPC ListenOn (etcd registration
     # must stay reachable from the host gateway), the gateway REST listener
     # (RestConf) and the DevServer metrics/pprof HTTP endpoints, which would
@@ -314,7 +392,7 @@ prepare_etc() {
     sed -e 's/ListenOn: 0\.0\.0\.0:/ListenOn: 127.0.0.1:/' \
         -e '/^DevServer:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}' \
         -e '/^RestConf:/,/^[^ ]/{s/^\([[:space:]]*\)Host: 0\.0\.0\.0/\1Host: 127.0.0.1/}' \
-        "$BACKEND/$rel" >"$ETC_DIR/$rel"
+        "$BACKEND/$rel" >"$ETC_DIR/$rel" || exit $?
   done
 }
 
@@ -375,6 +453,287 @@ http_code() {
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "$1" 2>/dev/null || true)"
   [[ -n "$code" ]] || code="000"
   printf '%s' "$code"
+}
+
+is_managed_binary_service() {
+  local wanted="$1" row name
+  [[ "$wanted" == "gateway" ]] && return 0
+  for row in "${RPC_SERVICES[@]}" "${MQ_SERVICES[@]}"; do
+    IFS='|' read -r name _ <<<"$row"
+    [[ "$name" == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+# A managed Go process executes its private runtime binary. Python helpers are
+# identified by an exact script argument because /proc/<pid>/exe is Python.
+service_identity() {
+  local name="$1"
+  case "$name" in
+    frontend)
+      printf 'arg|%s\n' "$ROOT/deploy/dev/serve_release.py"
+      ;;
+    log-maintainer)
+      printf 'arg|%s\n' "$ROOT/deploy/dev/log_maintainer.py"
+      ;;
+    llm-fixture)
+      printf 'arg|%s\n' "$ROOT/deploy/dev/e2e/fixtures/llm_provider.py"
+      ;;
+    *)
+      is_managed_binary_service "$name" || return 1
+      printf 'exe|%s\n' "$RUN_DIR/bin/$name"
+      ;;
+  esac
+}
+
+safe_pid() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  ((10#$pid > 1)) || return 1
+  [[ "$pid" != "$$" && "$pid" != "$BASHPID" ]]
+}
+
+canonical_path() {
+  local path="$1" resolved
+  if resolved="$(readlink -f "$path" 2>/dev/null)" && [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return 0
+  fi
+  (
+    cd "$(dirname "$path")" 2>/dev/null || exit $?
+    printf '%s/%s\n' "$(pwd -P)" "$(basename "$path")"
+  )
+}
+
+process_executable_matches() {
+  local pid="$1" expected="$2" actual="" command=""
+  expected="$(canonical_path "$expected")" || return 1
+  if [[ -L "/proc/$pid/exe" ]]; then
+    actual="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+    actual="${actual% (deleted)}"
+    [[ "$actual" == "$expected" ]]
+    return
+  fi
+
+  # Non-Linux fallback. Managed paths must not contain whitespace here because
+  # portable ps exposes a flattened command line rather than argv boundaries.
+  command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+  actual="${command%%[[:space:]]*}"
+  [[ -n "$actual" ]] || return 1
+  actual="$(canonical_path "$actual")" || return 1
+  [[ "$actual" == "$expected" ]]
+}
+
+process_has_exact_arg() {
+  local pid="$1" expected="$2" arg command
+  if [[ -r "/proc/$pid/cmdline" ]]; then
+    while IFS= read -r -d '' arg; do
+      [[ "$arg" == "$expected" ]] && return 0
+    done <"/proc/$pid/cmdline"
+    return 1
+  fi
+
+  # Best-effort fallback for systems without procfs; workspace paths are
+  # required to be whitespace-free for an unambiguous flattened ps match.
+  command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+  [[ " $command " == *" $expected "* ]]
+}
+
+process_executable_is_python() {
+  local pid="$1" actual="" command=""
+  if [[ -L "/proc/$pid/exe" ]]; then
+    actual="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+    actual="${actual% (deleted)}"
+  else
+    command="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    actual="${command%%[[:space:]]*}"
+  fi
+  actual="${actual##*/}"
+  [[ "$actual" == python || "$actual" == python[0-9]* ]]
+}
+
+service_process_matches() {
+  local name="$1" pid="$2" identity kind expected
+  safe_pid "$pid" || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  identity="$(service_identity "$name")" || return 1
+  IFS='|' read -r kind expected <<<"$identity"
+  case "$kind" in
+    exe) process_executable_matches "$pid" "$expected" ;;
+    arg)
+      process_executable_is_python "$pid" &&
+        process_has_exact_arg "$pid" "$expected"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+service_process_pids() {
+  local name="$1" proc pid
+  if [[ -d /proc ]]; then
+    for proc in /proc/[0-9]*; do
+      pid="${proc##*/}"
+      service_process_matches "$name" "$pid" && printf '%s\n' "$pid"
+    done
+    return 0
+  fi
+  while IFS= read -r pid; do
+    pid="${pid//[[:space:]]/}"
+    service_process_matches "$name" "$pid" && printf '%s\n' "$pid"
+  done < <(ps -e -o pid= 2>/dev/null || true)
+}
+
+pid_owner_file() {
+  printf '%s.owner\n' "$1"
+}
+
+read_service_pidfile() {
+  local pidfile="$1" pid=""
+  [[ -f "$pidfile" && ! -L "$pidfile" ]] || return 1
+  IFS= read -r pid <"$pidfile" || return 1
+  safe_pid "$pid" || return 1
+  printf '%s\n' "$pid"
+}
+
+read_service_owner_token() {
+  local name="$1" pidfile="$2" owner token=""
+  owner="$(pid_owner_file "$pidfile")"
+  [[ -f "$owner" && ! -L "$owner" ]] || return 1
+  IFS= read -r token <"$owner" || return 1
+  [[ "$token" == "$name:"* ]] || return 1
+  printf '%s\n' "$token"
+}
+
+process_has_owner_token() {
+  local pid="$1" expected="$2" entry
+  [[ -r "/proc/$pid/environ" ]] || return 1
+  while IFS= read -r -d '' entry; do
+    [[ "$entry" == "$MANAGED_PROCESS_TOKEN_ENV=$expected" ]] && return 0
+  done <"/proc/$pid/environ"
+  return 1
+}
+
+# Owner metadata is optional for processes created before token tracking was
+# introduced. Once an owner file exists, however, it is a mandatory fence
+# against treating a reused PID with the same executable as our process.
+service_owner_matches() {
+  local name="$1" pid="$2" pidfile="$3" owner token
+  owner="$(pid_owner_file "$pidfile")"
+  if [[ ! -e "$owner" && ! -L "$owner" ]]; then
+    return 0
+  fi
+  token="$(read_service_owner_token "$name" "$pidfile")" || return 1
+  process_has_owner_token "$pid" "$token"
+}
+
+service_process_can_be_stopped() {
+  local name="$1" pid="$2" pidfile owner
+  service_process_matches "$name" "$pid" || return 1
+  pidfile="$PID_DIR/$name.pid"
+  owner="$(pid_owner_file "$pidfile")"
+  if [[ -e "$owner" || -L "$owner" ]]; then
+    service_owner_matches "$name" "$pid" "$pidfile"
+    return $?
+  fi
+  return 0
+}
+
+process_stat_group() {
+  local pid="$1" line fields state pgrp session
+  [[ -r "/proc/$pid/stat" ]] || return 1
+  line="$(<"/proc/$pid/stat")" || return 1
+  fields="${line##*) }"
+  read -r state _ pgrp session _ <<<"$fields" || return 1
+  [[ -n "$pgrp" && -n "$session" ]] || return 1
+  [[ "$state" != "Z" && "$state" != "X" ]] || return 1
+  printf '%s|%s\n' "$pgrp" "$session"
+}
+
+process_parent_pid() {
+  local pid="$1" line fields state parent
+  if [[ -r "/proc/$pid/stat" ]]; then
+    line="$(<"/proc/$pid/stat")" || return 1
+    fields="${line##*) }"
+    read -r state parent _ <<<"$fields" || return 1
+  else
+    parent="$(ps -p "$pid" -o ppid= 2>/dev/null)" || return 1
+    parent="${parent//[[:space:]]/}"
+  fi
+  [[ "$parent" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$parent"
+}
+
+process_pid_running() {
+  local pid="$1"
+  safe_pid "$pid" || return 1
+  if [[ -d /proc ]]; then
+    process_stat_group "$pid" >/dev/null
+    return $?
+  fi
+  kill -0 "$pid" 2>/dev/null
+}
+
+process_group_has_owner_token() {
+  local pgid="$1" token="$2" proc pid group pgrp session
+  [[ -d /proc ]] || return 1
+  safe_pid "$pgid" || return 1
+  for proc in /proc/[0-9]*; do
+    pid="${proc##*/}"
+    group="$(process_stat_group "$pid" 2>/dev/null || true)"
+    [[ -n "$group" ]] || continue
+    IFS='|' read -r pgrp session <<<"$group"
+    if [[ "$pgrp" == "$pgid" && "$session" == "$pgid" ]] &&
+      process_has_owner_token "$pid" "$token"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Ownership metadata is inherited through exec/fork, so a process group can be
+# recovered safely even after its original leader has exited.
+managed_process_group_matches() {
+  local name="$1" pgid="$2" pidfile="$3" token
+  token="$(read_service_owner_token "$name" "$pidfile")" || return 1
+  process_group_has_owner_token "$pgid" "$token"
+}
+
+remove_service_state() {
+  local pidfile="$1" owner step_status status=0
+  owner="$(pid_owner_file "$pidfile")"
+  if rm -f "$pidfile"; then
+    :
+  else
+    status=$?
+  fi
+  if rm -f "$owner"; then
+    :
+  else
+    step_status=$?
+    [[ "$status" -ne 0 ]] || status="$step_status"
+  fi
+  return "$status"
+}
+
+remove_stale_service_state() {
+  local name="$1" pidfile="$2" pid="invalid"
+  pid="$(read_service_pidfile "$pidfile" 2>/dev/null || true)"
+  echo "removing stale pidfile for $name (pid=${pid:-invalid}; identity mismatch)" >&2
+  remove_service_state "$pidfile"
+}
+
+# Prints a live, identity-checked PID. This function is intentionally read-only:
+# status and migration guards must never race a concurrent start by deleting
+# process ownership state.
+validated_service_pid() {
+  local name="$1" pidfile="$2" pid=""
+  pid="$(read_service_pidfile "$pidfile")" || return 1
+  if service_process_matches "$name" "$pid" &&
+    service_owner_matches "$name" "$pid" "$pidfile"; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+  return 1
 }
 
 wait_topics() {
@@ -498,24 +857,49 @@ apply_sql_patches() {
   echo "applying ${#patches[@]} idempotent sql patch(es)"
   local sql
   for sql in "${patches[@]}"; do
-    mysql_root <"$sql"
+    mysql_root <"$sql" || return $?
   done
 }
 
 require_apps_stopped_for_patches() {
-  local name pidfile pid running=()
+  local operation="${1:-schema patches}"
+  local recovery="${2:-run 'just app-down' before 'just middleware-up'}"
+  local name pidfile pid key seen=" " running=()
   while IFS= read -r name; do
     [[ "$name" == "log-maintainer" ]] && continue
     pidfile="$PID_DIR/$name.pid"
-    [[ -f "$pidfile" ]] || continue
-    pid="$(cat "$pidfile")"
-    if kill -0 "$pid" 2>/dev/null; then
-      running+=("$name:$pid")
+    if pid="$(validated_service_pid "$name" "$pidfile")"; then
+      key="$name:$pid"
+      if [[ "$seen" != *" $key "* ]]; then
+        running+=("$key")
+        seen+="$key "
+      fi
+    elif pid="$(read_service_pidfile "$pidfile" 2>/dev/null)" &&
+      managed_process_group_matches "$name" "$pid" "$pidfile"; then
+      key="$name:group-$pid"
+      if [[ "$seen" != *" $key "* ]]; then
+        running+=("$key")
+        seen+="$key "
+      fi
     fi
   done < <(all_app_names)
+  while IFS= read -r name; do
+    [[ "$name" == "log-maintainer" ]] && continue
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      key="$name:$pid"
+      if [[ "$seen" != *" $key "* ]]; then
+        running+=("$key")
+        seen+="$key "
+      fi
+    done < <(service_process_pids "$name")
+  done < <(all_app_names)
+  if port_open 127.0.0.1 "$GATEWAY_PORT"; then
+    running+=("gateway-port:$GATEWAY_PORT")
+  fi
   if [[ ${#running[@]} -gt 0 ]]; then
-    echo "refusing schema patches while app processes are running: ${running[*]}" >&2
-    echo "run 'just app-down' before 'just middleware-up'" >&2
+    echo "refusing $operation while app processes are running: ${running[*]}" >&2
+    echo "$recovery" >&2
     return 1
   fi
 }
@@ -532,11 +916,11 @@ apply_eval_corpus() {
     files+=("$bulk")
   fi
   echo "seeding eval corpus from ${files[*]}"
-  python3 "$script" "${files[@]}" | mysql_root
+  python3 "$script" "${files[@]}" | mysql_root || return $?
   mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 1300;" </dev/null \
-    | awk '{print "eval corpus posts 1001-1300: "$1}'
+    | awk '{print "eval corpus posts 1001-1300: "$1}' || return $?
   mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 2001 AND 4000;" </dev/null \
-    | awk '{print "eval corpus posts 2001-4000: "$1}'
+    | awk '{print "eval corpus posts 2001-4000: "$1}' || return $?
 }
 
 search_doc_count() {
@@ -554,9 +938,9 @@ PY
 # Direct SQL inserts do not emit post-create MQ events. Rebuild ES when
 # the index is behind published MySQL rows so search/assistant evals work.
 maybe_rebuild_search() {
-  load_env
+  load_env || return $?
   local corpus_n es_n
-  corpus_n="$(mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 4000 AND status = 1;" </dev/null | tr -d '[:space:]')"
+  corpus_n="$(mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 4000 AND status = 1;" </dev/null | tr -d '[:space:]')" || return $?
   es_n="$(search_doc_count "http://127.0.0.1:9200/xbh_posts/_count" | tr -d '[:space:]')"
   if [[ -z "$corpus_n" || "$corpus_n" == "0" ]]; then
     echo "skip search rebuild: eval corpus not in mysql"
@@ -568,9 +952,282 @@ maybe_rebuild_search() {
   fi
   echo "rebuilding search index (es=${es_n} eval corpus=${corpus_n})"
   (
-    cd "$BACKEND"
+    cd "$BACKEND" || exit $?
     go run ./app/search/mq/cmd/rebuild -f "$ETC_DIR/app/search/mq/etc/search-consumer.yaml"
   )
+}
+
+# True while a process group contains at least one runnable or sleeping member.
+# Linux zombies no longer execute or own sockets, but kill -0 still reports
+# them, so inspect /proc state there and use kill -0 as the portable fallback.
+process_group_running() {
+  local pgid="$1" proc pid group pgrp _
+  if [[ -d /proc ]]; then
+    for proc in /proc/[0-9]*; do
+      pid="${proc##*/}"
+      group="$(process_stat_group "$pid" 2>/dev/null || true)"
+      [[ -n "$group" ]] || continue
+      IFS='|' read -r pgrp _ <<<"$group"
+      if [[ "$pgrp" == "$pgid" ]]; then
+        return 0
+      fi
+    done
+    return 1
+  fi
+  kill -0 -- "-$pgid" 2>/dev/null
+}
+
+stoppable_process_group_running() {
+  local pgid="$1" token="${2:-}"
+  process_group_running "$pgid" || return 1
+  [[ -z "$token" ]] || process_group_has_owner_token "$pgid" "$token"
+}
+
+stop_owned_process_group() {
+  local name="$1" pgid="$2" i pidfile owner token=""
+  pidfile="$PID_DIR/$name.pid"
+  owner="$(pid_owner_file "$pidfile")"
+  if [[ -e "$owner" || -L "$owner" ]]; then
+    token="$(read_service_owner_token "$name" "$pidfile")" || {
+      echo "refusing to stop $name group=$pgid: invalid owner token" >&2
+      return 1
+    }
+  fi
+  if ! process_group_running "$pgid"; then
+    return 0
+  fi
+  if ! stoppable_process_group_running "$pgid" "$token"; then
+    echo "refusing to stop $name group=$pgid: owner token mismatch" >&2
+    return 1
+  fi
+  if ! kill -- "-$pgid" 2>/dev/null && stoppable_process_group_running "$pgid" "$token"; then
+    echo "failed to send TERM to $name group=$pgid" >&2
+    return 1
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if ! stoppable_process_group_running "$pgid" "$token"; then
+      if process_group_running "$pgid"; then
+        echo "not escalating stop for $name group=$pgid: owner token changed" >&2
+        return 1
+      fi
+      return 0
+    fi
+    sleep 0.2
+  done
+  if ! stoppable_process_group_running "$pgid" "$token"; then
+    if process_group_running "$pgid"; then
+      echo "not escalating stop for $name group=$pgid: owner token changed" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if ! kill -9 -- "-$pgid" 2>/dev/null && stoppable_process_group_running "$pgid" "$token"; then
+    echo "failed to send KILL to $name group=$pgid" >&2
+    return 1
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if ! stoppable_process_group_running "$pgid" "$token"; then
+      if process_group_running "$pgid"; then
+        echo "$name group $pgid changed owner while stopping" >&2
+        return 1
+      fi
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "$name process group $pgid survived KILL" >&2
+  return 1
+}
+
+started_process_can_be_stopped() {
+  local pid="$1" token="${2:-}" parent
+  process_pid_running "$pid" || return 1
+  [[ -z "$token" ]] && return 0
+  process_has_owner_token "$pid" "$token" && return 0
+  parent="$(process_parent_pid "$pid")" || return 1
+  [[ "$parent" == "$BASHPID" ]]
+}
+
+# Fence cleanup with the launch token (or the still-direct child relation
+# before exec publishes that token) so PID reuse cannot redirect signals.
+stop_started_tree() {
+  local name="$1" pid="$2" token="${3:-}" i group_owned=0
+  if ! safe_pid "$pid"; then
+    echo "cannot stop newly started $name: unsafe pid ${pid:-empty}" >&2
+    return 1
+  fi
+  if process_group_running "$pid"; then
+    if [[ -n "$token" ]] && ! process_group_has_owner_token "$pid" "$token"; then
+      echo "cannot stop newly started $name group=$pid: owner token mismatch" >&2
+      return 1
+    fi
+    group_owned=1
+  elif ! process_pid_running "$pid"; then
+    return 0
+  elif ! started_process_can_be_stopped "$pid" "$token"; then
+    echo "cannot stop newly started $name pid=$pid: owner token mismatch" >&2
+    return 1
+  fi
+  if [[ "$group_owned" == "1" ]]; then
+    if ! kill -- "-$pid" 2>/dev/null && stoppable_process_group_running "$pid" "$token"; then
+      echo "failed to send TERM to newly started $name group=$pid" >&2
+      return 1
+    fi
+  else
+    if ! kill "$pid" 2>/dev/null && started_process_can_be_stopped "$pid" "$token"; then
+      echo "failed to send TERM to newly started $name pid=$pid" >&2
+      return 1
+    fi
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if process_group_running "$pid"; then
+      if [[ -n "$token" ]] && ! process_group_has_owner_token "$pid" "$token"; then
+        echo "not escalating newly started $name group=$pid: owner token changed" >&2
+        return 1
+      fi
+      if [[ "$group_owned" == "0" ]]; then
+        group_owned=1
+        if ! kill -- "-$pid" 2>/dev/null && stoppable_process_group_running "$pid" "$token"; then
+          echo "failed to send TERM to newly started $name group=$pid" >&2
+          return 1
+        fi
+      fi
+    elif ! process_pid_running "$pid"; then
+      return 0
+    elif ! started_process_can_be_stopped "$pid" "$token"; then
+      echo "not escalating newly started $name pid=$pid: owner token changed" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  if process_group_running "$pid"; then
+    if [[ -n "$token" ]] && ! process_group_has_owner_token "$pid" "$token"; then
+      echo "not escalating newly started $name group=$pid: owner token changed" >&2
+      return 1
+    fi
+    group_owned=1
+    if ! kill -9 -- "-$pid" 2>/dev/null && stoppable_process_group_running "$pid" "$token"; then
+      echo "failed to send KILL to newly started $name group=$pid" >&2
+      return 1
+    fi
+  elif process_pid_running "$pid"; then
+    if ! started_process_can_be_stopped "$pid" "$token"; then
+      echo "not escalating newly started $name pid=$pid: owner token changed" >&2
+      return 1
+    fi
+    if ! kill -9 "$pid" 2>/dev/null && started_process_can_be_stopped "$pid" "$token"; then
+      echo "failed to send KILL to newly started $name pid=$pid" >&2
+      return 1
+    fi
+  else
+    return 0
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ "$group_owned" == "1" ]]; then
+      if ! stoppable_process_group_running "$pid" "$token"; then
+        if process_group_running "$pid"; then
+          echo "newly started $name group $pid changed owner while stopping" >&2
+          return 1
+        fi
+        return 0
+      fi
+    elif ! process_pid_running "$pid"; then
+      return 0
+    elif ! started_process_can_be_stopped "$pid" "$token"; then
+      echo "newly started $name pid $pid changed owner while stopping" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  echo "newly started $name process tree $pid survived KILL" >&2
+  return 1
+}
+
+new_managed_process_token() {
+  local name="$1"
+  printf '%s:%s:%s:%s\n' \
+    "$name" "$BASHPID" "$RANDOM" "$(date +%s%N)"
+}
+
+track_app_started_service() {
+  [[ "$APP_UP_TRACK_STARTS" == "1" ]] || return 0
+  APP_UP_STARTED_SERVICES+=("$1")
+}
+
+prepare_service_start_state() {
+  local name="$1" pidfile="$2" pid="" owner
+  owner="$(pid_owner_file "$pidfile")"
+  if pid="$(read_service_pidfile "$pidfile" 2>/dev/null)"; then
+    if managed_process_group_matches "$name" "$pid" "$pidfile"; then
+      echo "stopping orphaned $name process group before restart (group=$pid)" >&2
+      stop_svc "$name" || return $?
+      return 0
+    fi
+    if service_process_matches "$name" "$pid" &&
+      [[ -e "$owner" || -L "$owner" ]]; then
+      echo "refusing to replace $name pid=$pid: owner token mismatch" >&2
+      return 1
+    fi
+  fi
+  if [[ -e "$pidfile" || -L "$pidfile" || -e "$owner" || -L "$owner" ]]; then
+    remove_stale_service_state "$name" "$pidfile" || return $?
+  fi
+}
+
+record_started_pid() {
+  local name="$1" pid="$2" pidfile="$3" token="$4"
+  local owner pid_tmp owner_tmp status=0 cleanup_status=0
+  owner="$(pid_owner_file "$pidfile")"
+  pid_tmp="$pidfile.tmp.$BASHPID.$RANDOM"
+  owner_tmp="$owner.tmp.$BASHPID.$RANDOM"
+
+  printf '%s\n' "$token" >"$owner_tmp" || status=$?
+  if [[ "$status" -eq 0 ]]; then
+    chmod 600 "$owner_tmp" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    printf '%s\n' "$pid" >"$pid_tmp" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    chmod 600 "$pid_tmp" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    mv -f "$owner_tmp" "$owner" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    mv -f "$pid_tmp" "$pidfile" || status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
+    return 0
+  fi
+
+  echo "failed to record $name pid=$pid; stopping the newly started process" >&2
+  stop_started_tree "$name" "$pid" "$token" || cleanup_status=$?
+  rm -f "$pid_tmp" "$owner_tmp" 2>/dev/null || true
+  if [[ "$cleanup_status" -eq 0 ]]; then
+    remove_service_state "$pidfile" 2>/dev/null || true
+  else
+    # Preserve a usable recovery handle when possible if immediate cleanup
+    # itself failed. Never replace the original pidfile error status.
+    printf '%s\n' "$token" >"$owner" 2>/dev/null || true
+    chmod 600 "$owner" 2>/dev/null || true
+    printf '%s\n' "$pid" >"$pidfile" 2>/dev/null || true
+    chmod 600 "$pidfile" 2>/dev/null || true
+    echo "failed to stop unrecorded $name pid=$pid; manual cleanup required" >&2
+  fi
+  return "$status"
+}
+
+cleanup_failed_service_start() {
+  local name="$1" pid="$2" pidfile="$3" token="${4:-}" stop_status
+  if stop_started_tree "$name" "$pid" "$token"; then
+    remove_service_state "$pidfile"
+    return $?
+  else
+    stop_status=$?
+  fi
+  echo "keeping pidfile for $name because startup cleanup failed" >&2
+  return "$stop_status"
 }
 
 start_svc() {
@@ -580,49 +1237,83 @@ start_svc() {
   local logfile="$LOG_DIR/$name.log"
   local bindir="$RUN_DIR/bin"
   local executable="$bindir/$name"
-  secure_runtime_paths
-  touch "$logfile"
-  chmod 600 "$logfile"
-  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    echo "already running: $name pid=$(cat "$pidfile")"
+  local pid build_status token cleanup_status=0
+  secure_runtime_paths || return $?
+  touch "$logfile" || return $?
+  chmod 600 "$logfile" || return $?
+  if pid="$(validated_service_pid "$name" "$pidfile")"; then
+    echo "already running: $name pid=$pid"
     return 0
   fi
+  prepare_service_start_state "$name" "$pidfile" || return $?
   echo "building $name"
-  (
-    cd "$workdir"
+  if (
+    cd "$workdir" || exit $?
     go build -o "$executable.tmp" "$bin"
-  ) >>"$logfile" 2>&1
-  mv -f "$executable.tmp" "$executable"
+  ) >>"$logfile" 2>&1; then
+    build_status=0
+  else
+    build_status=$?
+  fi
+  [[ "$build_status" -eq 0 ]] || return "$build_status"
+  mv -f "$executable.tmp" "$executable" || return $?
   echo "starting $name"
+  token="$(new_managed_process_token "$name")" || return $?
   (
-    cd "$workdir"
-    setsid "$executable" "$@" >>"$logfile" 2>&1 </dev/null &
-    echo $! >"$pidfile"
-    chmod 600 "$pidfile"
-  )
+    local started_pid
+    cd "$workdir" || exit $?
+    (
+      close_app_lifecycle_lock_fd || exit $?
+      exec env "$MANAGED_PROCESS_TOKEN_ENV=$token" setsid "$executable" "$@"
+    ) >>"$logfile" 2>&1 </dev/null &
+    started_pid=$!
+    record_started_pid "$name" "$started_pid" "$pidfile" "$token" || exit $?
+  ) || return $?
   sleep 0.1
-  if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+  pid="$(<"$pidfile")"
+  if ! validated_service_pid "$name" "$pidfile" >/dev/null; then
+    if cleanup_failed_service_start "$name" "$pid" "$pidfile" "$token"; then
+      :
+    else
+      cleanup_status=$?
+    fi
     echo "$name exited during startup; see $logfile" >&2
+    [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
     return 1
   fi
+  track_app_started_service "$name"
 }
 
 start_log_maintainer() {
   local pidfile="$PID_DIR/log-maintainer.pid"
-  secure_runtime_paths
-  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+  local pid started_pid token cleanup_status=0
+  secure_runtime_paths || return $?
+  if pid="$(validated_service_pid log-maintainer "$pidfile")"; then
     return 0
   fi
-  setsid python3 "$ROOT/deploy/dev/log_maintainer.py" "$LOG_DIR" \
-    --max-bytes "$LOG_MAX_BYTES" --interval "$LOG_ROTATE_INTERVAL_SECONDS" \
-    >/dev/null 2>&1 </dev/null &
-  echo $! >"$pidfile"
-  chmod 600 "$pidfile"
+  prepare_service_start_state log-maintainer "$pidfile" || return $?
+  token="$(new_managed_process_token log-maintainer)" || return $?
+  (
+    close_app_lifecycle_lock_fd || exit $?
+    exec env "$MANAGED_PROCESS_TOKEN_ENV=$token" \
+      setsid python3 "$ROOT/deploy/dev/log_maintainer.py" "$LOG_DIR" \
+      --max-bytes "$LOG_MAX_BYTES" --interval "$LOG_ROTATE_INTERVAL_SECONDS"
+  ) >/dev/null 2>&1 </dev/null &
+  started_pid=$!
+  record_started_pid log-maintainer "$started_pid" "$pidfile" "$token" || return $?
   sleep 0.1
-  if ! kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+  pid="$(<"$pidfile")"
+  if ! validated_service_pid log-maintainer "$pidfile" >/dev/null; then
+    if cleanup_failed_service_start log-maintainer "$pid" "$pidfile" "$token"; then
+      :
+    else
+      cleanup_status=$?
+    fi
     echo "log maintainer exited during startup" >&2
+    [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
     return 1
   fi
+  track_app_started_service log-maintainer
 }
 
 start_row() {
@@ -632,34 +1323,99 @@ start_row() {
 }
 
 stop_tree() {
-  local pid="$1"
-  if ! kill -0 "$pid" 2>/dev/null && ! kill -0 -- "-$pid" 2>/dev/null; then
+  local name="$1" pid="$2" i group_owned=0
+  if ! service_process_can_be_stopped "$name" "$pid"; then
+    if service_process_matches "$name" "$pid"; then
+      echo "refusing to stop $name pid=$pid: owner token mismatch" >&2
+      return 1
+    fi
     return 0
   fi
-  kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
-  local i
+  if process_group_running "$pid"; then
+    group_owned=1
+  fi
+  if [[ "$group_owned" == "1" ]]; then
+    stop_owned_process_group "$name" "$pid"
+    return $?
+  else
+    if ! kill "$pid" 2>/dev/null && service_process_can_be_stopped "$name" "$pid"; then
+      echo "failed to send TERM to $name pid=$pid" >&2
+      return 1
+    fi
+  fi
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if ! kill -0 "$pid" 2>/dev/null && ! kill -0 -- "-$pid" 2>/dev/null; then
+    if ! service_process_can_be_stopped "$name" "$pid"; then
+      if service_process_matches "$name" "$pid"; then
+        echo "not escalating stop for $name: pid $pid owner token changed" >&2
+        return 1
+      fi
+      echo "not escalating stop for $name: pid $pid no longer matches" >&2
       return 0
     fi
     sleep 0.2
   done
-  kill -9 -- "-$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+  if ! service_process_can_be_stopped "$name" "$pid"; then
+    if service_process_matches "$name" "$pid"; then
+      echo "not escalating stop for $name: pid $pid owner token changed" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if ! kill -9 "$pid" 2>/dev/null &&
+    service_process_can_be_stopped "$name" "$pid"; then
+    echo "failed to send KILL to $name pid=$pid" >&2
+    return 1
+  fi
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if ! service_process_can_be_stopped "$name" "$pid"; then
+      if service_process_matches "$name" "$pid"; then
+        echo "$name pid $pid changed owner while stopping" >&2
+        return 1
+      fi
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "$name process tree $pid survived KILL" >&2
+  return 1
 }
 
 stop_svc() {
   local name="$1"
   local pidfile="$PID_DIR/$name.pid"
-  if [[ ! -f "$pidfile" ]]; then
+  local pid="" owner stop_status
+  owner="$(pid_owner_file "$pidfile")"
+  if pid="$(validated_service_pid "$name" "$pidfile")"; then
+    echo "stopping $name pid=$pid"
+    if stop_tree "$name" "$pid"; then
+      :
+    else
+      stop_status=$?
+      echo "keeping pidfile for $name because the process did not stop" >&2
+      return "$stop_status"
+    fi
+  elif pid="$(read_service_pidfile "$pidfile" 2>/dev/null)" &&
+    managed_process_group_matches "$name" "$pid" "$pidfile"; then
+    echo "stopping orphaned $name group=$pid"
+    if stop_owned_process_group "$name" "$pid"; then
+      :
+    else
+      stop_status=$?
+      echo "keeping pidfile for $name because the process group did not stop" >&2
+      return "$stop_status"
+    fi
+  elif pid="$(read_service_pidfile "$pidfile" 2>/dev/null)" &&
+    service_process_matches "$name" "$pid" &&
+    [[ -e "$owner" || -L "$owner" ]]; then
+    echo "refusing to stop $name pid=$pid: owner token mismatch; keeping pidfile" >&2
+    return 1
+  elif [[ -e "$pidfile" || -L "$pidfile" || -e "$owner" || -L "$owner" ]]; then
+    remove_stale_service_state "$name" "$pidfile" || return $?
+    return 0
+  else
     return 0
   fi
-  local pid
-  pid="$(cat "$pidfile")"
-  if [[ -n "$pid" ]]; then
-    echo "stopping $name pid=$pid"
-    stop_tree "$pid"
-  fi
-  rm -f "$pidfile"
+  remove_service_state "$pidfile"
 }
 
 assistant_agent_row() {
@@ -677,50 +1433,42 @@ assistant_agent_row() {
 restore_agent_after_fixture() {
   [[ "$AGENT_FIXTURE_RESTORE" == "1" ]] || return 0
   AGENT_FIXTURE_RESTORE=0
-  local restore_status=0 row
-  stop_svc assistant-agent || true
-  stop_svc llm-fixture || true
-  ensure_assistant_db_env
-  if row="$(assistant_agent_row)"; then
+  local restore_status=0 step_status=0 can_start=1 row
+  if stop_svc assistant-agent; then
+    :
+  else
+    restore_status=$?
+    can_start=0
+  fi
+  if stop_svc llm-fixture; then
+    :
+  else
+    step_status=$?
+    [[ "$restore_status" -ne 0 ]] || restore_status="$step_status"
+  fi
+  if ensure_assistant_db_env; then
+    :
+  else
+    step_status=$?
+    [[ "$restore_status" -ne 0 ]] || restore_status="$step_status"
+    can_start=0
+  fi
+  if [[ "$can_start" == "1" ]] && row="$(assistant_agent_row)"; then
     if ! start_row "$row" || ! wait_port 127.0.0.1 9136 120 assistant-agent-restored; then
       echo "failed to restore assistant-agent; run just app-up" >&2
-      restore_status=1
+      [[ "$restore_status" -ne 0 ]] || restore_status=1
     fi
+  elif [[ "$can_start" == "1" ]]; then
+    [[ "$restore_status" -ne 0 ]] || restore_status=1
   else
-    restore_status=1
+    echo "skipping assistant-agent restart because fixture cleanup failed" >&2
   fi
   return "$restore_status"
 }
 
-e2e_agent_reset() {
-  load_env
-  ensure_assistant_db_env
-  secure_runtime_paths
-  local agent_row fixture_pidfile fixture_log agent_pidfile test_status restore_status=0
-  agent_row="$(assistant_agent_row)"
-  agent_pidfile="$PID_DIR/assistant-agent.pid"
-  if [[ ! -f "$agent_pidfile" ]] || ! kill -0 "$(cat "$agent_pidfile")" 2>/dev/null; then
-    echo "assistant-agent must be running before the reset fixture gate" >&2
-    return 1
-  fi
-
-  stop_svc llm-fixture
-  fixture_pidfile="$PID_DIR/llm-fixture.pid"
-  fixture_log="$LOG_DIR/llm-fixture.log"
-  : >"$fixture_log"
-  chmod 600 "$fixture_log"
-  setsid python3 "$ROOT/deploy/dev/e2e/fixtures/llm_provider.py" \
-    --port "$AGENT_FIXTURE_PORT" >>"$fixture_log" 2>&1 </dev/null &
-  echo $! >"$fixture_pidfile"
-  chmod 600 "$fixture_pidfile"
-  if ! wait_http "http://127.0.0.1:$AGENT_FIXTURE_PORT/health" 30 llm-fixture; then
-    stop_svc llm-fixture
-    return 1
-  fi
-
-  AGENT_FIXTURE_RESTORE=1
-  trap restore_agent_after_fixture EXIT
-  stop_svc assistant-agent
+run_agent_reset_test_with_fixture() {
+  local agent_row="$1"
+  stop_svc assistant-agent || return $?
   (
     export ASSISTANT_LLM_ENABLED=true
     export ASSISTANT_LLM_WIRE_API=responses
@@ -736,21 +1484,76 @@ e2e_agent_reset() {
     export ASSISTANT_LLM_REASONING_COST_PER_MILLION_TOKENS=0
     export ASSISTANT_LLM_FALLBACK_ENABLED=false
     start_row "$agent_row"
-  )
-  wait_port 127.0.0.1 9136 60 assistant-agent-fixture
-
-  set +e
+  ) || return $?
+  wait_port 127.0.0.1 9136 60 assistant-agent-fixture || return $?
   E2E_EXPECT_ASSISTANT_RESET=1 PYTHONDONTWRITEBYTECODE=1 \
     python3 -m pytest -v \
     "$ROOT/deploy/dev/e2e/test_assistant.py::test_agent_stream_reset_replay"
-  test_status=$?
-  set -e
+}
+
+e2e_agent_reset_locked() {
+  load_env || return $?
+  ensure_assistant_db_env || return $?
+  secure_runtime_paths || return $?
+  local agent_row fixture_pidfile fixture_log fixture_pid fixture_token agent_pidfile agent_pid
+  local test_status=0 restore_status=0 cleanup_status=0
+  agent_row="$(assistant_agent_row)" || return $?
+  agent_pidfile="$PID_DIR/assistant-agent.pid"
+  if ! agent_pid="$(validated_service_pid assistant-agent "$agent_pidfile")"; then
+    echo "assistant-agent must be running before the reset fixture gate" >&2
+    return 1
+  fi
+
+  stop_svc llm-fixture || return $?
+  fixture_pidfile="$PID_DIR/llm-fixture.pid"
+  fixture_log="$LOG_DIR/llm-fixture.log"
+  : >"$fixture_log" || return $?
+  chmod 600 "$fixture_log" || return $?
+  fixture_token="$(new_managed_process_token llm-fixture)" || return $?
+  (
+    close_app_lifecycle_lock_fd || exit $?
+    exec env "$MANAGED_PROCESS_TOKEN_ENV=$fixture_token" \
+      setsid python3 "$ROOT/deploy/dev/e2e/fixtures/llm_provider.py" \
+      --port "$AGENT_FIXTURE_PORT"
+  ) >>"$fixture_log" 2>&1 </dev/null &
+  fixture_pid=$!
+  record_started_pid llm-fixture "$fixture_pid" "$fixture_pidfile" "$fixture_token" || return $?
+  sleep 0.1
+  if ! validated_service_pid llm-fixture "$fixture_pidfile" >/dev/null; then
+    if cleanup_failed_service_start llm-fixture "$fixture_pid" "$fixture_pidfile" "$fixture_token"; then
+      :
+    else
+      cleanup_status=$?
+    fi
+    echo "llm fixture exited during startup; see $fixture_log" >&2
+    [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
+    return 1
+  fi
+  if wait_http "http://127.0.0.1:$AGENT_FIXTURE_PORT/health" 30 llm-fixture; then
+    :
+  else
+    test_status=$?
+    stop_svc llm-fixture || return $?
+    return "$test_status"
+  fi
+
+  AGENT_FIXTURE_RESTORE=1
+  trap restore_agent_after_fixture EXIT
+  if run_agent_reset_test_with_fixture "$agent_row"; then
+    test_status=0
+  else
+    test_status=$?
+  fi
   restore_agent_after_fixture || restore_status=$?
   trap - EXIT
   if [[ "$test_status" -ne 0 ]]; then
     return "$test_status"
   fi
   return "$restore_status"
+}
+
+e2e_agent_reset() {
+  with_app_lifecycle_lock exclusive e2e_agent_reset_locked
 }
 
 all_app_names() {
@@ -762,51 +1565,69 @@ all_app_names() {
   printf '%s\n' gateway frontend log-maintainer
 }
 
-middleware_up() {
-  load_env
-  secure_runtime_paths
-  require_apps_stopped_for_patches
-  require_compose_version
+middleware_up_locked() {
+  load_env || return $?
+  secure_runtime_paths || return $?
+  require_apps_stopped_for_patches || return $?
+  require_compose_version || return $?
   echo "starting middleware containers"
-  compose up -d
-  wait_port 127.0.0.1 3306 90 mysql
-  apply_dev_user
-  apply_sql_patches
-  apply_dev_db_grants
-  apply_eval_corpus
-  wait_port 127.0.0.1 6379 60 redis
-  wait_port 127.0.0.1 2379 60 etcd
-  wait_port 127.0.0.1 9200 90 elasticsearch
-  wait_port 127.0.0.1 9876 90 rocketmq-namesrv
-  wait_port 127.0.0.1 10911 180 rocketmq-broker
-  wait_topics 180
-  wait_port 127.0.0.1 8123 60 clickhouse
-  apply_analytics_schema
-  wait_http "http://127.0.0.1:3100/ready" 90 loki
+  compose up -d || return $?
+  wait_port 127.0.0.1 3306 90 mysql || return $?
+  apply_dev_user || return $?
+  apply_sql_patches || return $?
+  apply_dev_db_grants || return $?
+  apply_eval_corpus || return $?
+  wait_port 127.0.0.1 6379 60 redis || return $?
+  wait_port 127.0.0.1 2379 60 etcd || return $?
+  wait_port 127.0.0.1 9200 90 elasticsearch || return $?
+  wait_port 127.0.0.1 9876 90 rocketmq-namesrv || return $?
+  wait_port 127.0.0.1 10911 180 rocketmq-broker || return $?
+  wait_topics 180 || return $?
+  wait_port 127.0.0.1 8123 60 clickhouse || return $?
+  apply_analytics_schema || return $?
+  wait_http "http://127.0.0.1:3100/ready" 90 loki || return $?
   wait_port 127.0.0.1 9333 60 seaweedfs-master || true
 }
 
-middleware_down() {
+middleware_up() {
+  with_app_lifecycle_lock exclusive middleware_up_locked
+}
+
+middleware_down_locked() {
   # Containers only; the :3002 proxy is app-layer and belongs to proxy_down.
+  require_apps_stopped_for_patches \
+    "middleware shutdown" "run 'just app-down' before 'just middleware-down'" || return $?
   echo "stopping middleware containers (volumes kept)"
-  compose stop
+  compose stop || return $?
+}
+
+middleware_down() {
+  with_app_lifecycle_lock exclusive middleware_down_locked
 }
 
 # Opt-in algorithm services live behind the compose profile "algorithm" so
 # middleware-only stacks skip model downloads and inference ports. recommend-rpc
 # already dials 127.0.0.1:9025 (ONLINE_INFER_ENDPOINT); until these containers
 # are up it degrades to rule-based ranking.
-algorithm_up() {
-  load_env
-  require_compose_version
+algorithm_up_locked() {
+  load_env || return $?
+  require_compose_version || return $?
   echo "starting algorithm containers (embedding-service, online-infer)"
-  COMPOSE_PROFILES=algorithm compose up -d
-  wait_port 127.0.0.1 9025 300 online-infer
+  COMPOSE_PROFILES=algorithm compose up -d || return $?
+  wait_port 127.0.0.1 9025 300 online-infer || return $?
+}
+
+algorithm_up() {
+  with_app_lifecycle_lock exclusive algorithm_up_locked
+}
+
+algorithm_down_locked() {
+  echo "stopping algorithm containers"
+  COMPOSE_PROFILES=algorithm compose stop online-infer embedding-service || return $?
 }
 
 algorithm_down() {
-  echo "stopping algorithm containers"
-  COMPOSE_PROFILES=algorithm compose stop online-infer embedding-service || true
+  with_app_lifecycle_lock exclusive algorithm_down_locked
 }
 
 # Local Flutter web engine assets (CanvasKit/Skwasm). Since Flutter 3.44 the
@@ -822,41 +1643,57 @@ ensure_web_canvaskit() {
   src="$sdk/bin/cache/flutter_web_sdk/canvaskit"
   [[ -d "$src" ]] || return 1
   dst="$FRONTEND/web/canvaskit"
-  mkdir -p "$FRONTEND/web"
+  mkdir -p "$FRONTEND/web" || return $?
   if [[ "$(readlink -f "$dst" 2>/dev/null)" != "$src" ]]; then
-    rm -f "$dst"
-    ln -s "$src" "$dst"
+    rm -f "$dst" || return $?
+    ln -s "$src" "$dst" || return $?
   fi
   [[ -e "$dst/canvaskit.js" ]]
 }
 
 proxy_up() {
+  local was_running=0 running_state
   if docker inspect "$PROXY_NAME" >/dev/null 2>&1; then
-    docker rm -f "$PROXY_NAME" >/dev/null
+    running_state="$(docker inspect -f '{{.State.Running}}' "$PROXY_NAME")" || return $?
+    [[ "$running_state" == "true" ]] && was_running=1
+    docker rm -f "$PROXY_NAME" >/dev/null || return $?
   fi
   echo "starting $PROXY_NAME on :$ENTRY_PORT"
   docker run -d --name "$PROXY_NAME" --network host --restart unless-stopped \
     -v "$PROXY_CONF:/etc/nginx/nginx.conf:ro" \
-    nginx:stable-alpine >/dev/null
+    nginx:stable-alpine >/dev/null || return $?
+  if [[ "$was_running" == "0" ]]; then
+    track_app_started_service proxy
+  fi
 }
 
 proxy_down() {
-  if docker inspect "$PROXY_NAME" >/dev/null 2>&1; then
+  local container_names status
+  if container_names="$(docker ps -a --format '{{.Names}}')"; then
+    :
+  else
+    status=$?
+    echo "failed to list Docker containers while stopping $PROXY_NAME" >&2
+    return "$status"
+  fi
+  if grep -Fxq -- "$PROXY_NAME" <<<"$container_names"; then
     echo "stopping $PROXY_NAME"
-    docker rm -f "$PROXY_NAME" >/dev/null
+    docker rm -f "$PROXY_NAME" >/dev/null || return $?
   fi
 }
 
 frontend_up() {
   local pidfile="$PID_DIR/frontend.pid"
   local logfile="$LOG_DIR/frontend.log"
-  secure_runtime_paths
-  touch "$logfile"
-  chmod 600 "$logfile"
-  if [[ -f "$pidfile" ]] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
-    echo "already running: frontend pid=$(cat "$pidfile")"
+  local pid build_status token cleanup_status=0
+  secure_runtime_paths || return $?
+  touch "$logfile" || return $?
+  chmod 600 "$logfile" || return $?
+  if pid="$(validated_service_pid frontend "$pidfile")"; then
+    echo "already running: frontend pid=$pid"
     return 0
   fi
+  prepare_service_start_state frontend "$pidfile" || return $?
 
   # CanvasKit base reaches the release build as a compile-time dart-define;
   # prefer same-origin assets (web/canvaskit -> SDK cache), fall back to the
@@ -889,36 +1726,54 @@ frontend_up() {
 
   if [[ "$needs_build" == "1" ]]; then
     echo "building frontend (release)..."
-    if ! (
-      cd "$FRONTEND"
+    if (
+      cd "$FRONTEND" || exit $?
       env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
         -u ALL_PROXY -u all_proxy \
         flutter build web --release -t lib/main.dart \
         --no-web-resources-cdn \
         --dart-define=FLUTTER_WEB_CANVASKIT_URL="${canvaskit_url:-/canvaskit/}"
     ) >>"$logfile" 2>&1; then
-      if [[ -f "$bundle/index.html" ]]; then
-        echo "warning: frontend build failed, serving stale bundle" >&2
-        rm -f "$RUN_DIR/front-build.stamp"
-      else
-        echo "frontend build failed and no bundle exists; see $logfile" >&2
-        return 1
-      fi
+      build_status=0
     else
-      touch "$RUN_DIR/front-build.stamp"
+      build_status=$?
     fi
+    if [[ "$build_status" -ne 0 ]]; then
+      rm -f "$RUN_DIR/front-build.stamp"
+      echo "frontend build failed; refusing to serve an existing bundle; see $logfile" >&2
+      return "$build_status"
+    fi
+    touch "$RUN_DIR/front-build.stamp" || return $?
   else
     echo "frontend bundle up to date; set FORCE_FRONT_BUILD=1 to rebuild"
   fi
 
   echo "starting frontend on :$FRONT_PORT (static release bundle)"
+  token="$(new_managed_process_token frontend)" || return $?
   (
-    cd "$FRONTEND"
-    setsid python3 "$ROOT/deploy/dev/serve_release.py" "$FRONT_PORT" "$bundle" \
-      >>"$logfile" 2>&1 </dev/null &
-    echo $! >"$pidfile"
-    chmod 600 "$pidfile"
-  )
+    local started_pid
+    cd "$FRONTEND" || exit $?
+    (
+      close_app_lifecycle_lock_fd || exit $?
+      exec env "$MANAGED_PROCESS_TOKEN_ENV=$token" \
+        setsid python3 "$ROOT/deploy/dev/serve_release.py" "$FRONT_PORT" "$bundle"
+    ) >>"$logfile" 2>&1 </dev/null &
+    started_pid=$!
+    record_started_pid frontend "$started_pid" "$pidfile" "$token" || exit $?
+  ) || return $?
+  sleep 0.1
+  pid="$(<"$pidfile")"
+  if ! validated_service_pid frontend "$pidfile" >/dev/null; then
+    if cleanup_failed_service_start frontend "$pid" "$pidfile" "$token"; then
+      :
+    else
+      cleanup_status=$?
+    fi
+    echo "frontend exited during startup; see $logfile" >&2
+    [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
+    return 1
+  fi
+  track_app_started_service frontend
 }
 
 # True when no tracked frontend source is newer than the last build stamp.
@@ -928,67 +1783,190 @@ front_bundle_fresh() {
   local changed roots=("$FRONTEND/lib" "$FRONTEND/web" "$FRONTEND/pubspec.yaml" "$FRONTEND/pubspec.lock")
   [[ -d "$FRONTEND/assets" ]] && roots+=("$FRONTEND/assets")
   changed="$(find "${roots[@]}" \
-    -type f -newer "$stamp" -print -quit 2>/dev/null)"
+    -type f -newer "$stamp" -print -quit 2>/dev/null)" || return $?
   [[ -z "$changed" ]]
 }
 
-app_up() {
-  load_env
-  ensure_assistant_db_env
-  secure_runtime_paths
-  clear_sensitive_assistant_logs
-  wipe_legacy_assistant_redis
-  prepare_etc
-  start_log_maintainer
+app_up_steps() {
+  load_env || return $?
+  ensure_assistant_db_env || return $?
+  secure_runtime_paths || return $?
+  clear_sensitive_assistant_logs || return $?
+  wipe_legacy_assistant_redis || return $?
+  prepare_etc || return $?
+  start_log_maintainer || return $?
   local row
   for row in "${RPC_SERVICES[@]}"; do
-    start_row "$row"
+    start_row "$row" || return $?
   done
-  wait_port 127.0.0.1 9090 240 user-rpc
-  wait_topics 180
+  wait_port 127.0.0.1 9090 240 user-rpc || return $?
+  wait_topics 180 || return $?
   for row in "${MQ_SERVICES[@]}"; do
-    start_row "$row"
+    start_row "$row" || return $?
   done
-  start_svc gateway "$BACKEND" ./app/gateway -f "$ETC_DIR/app/gateway/etc/gateway.yaml"
-  frontend_up
-  proxy_up
-  wait_port 127.0.0.1 "$GATEWAY_PORT" 240 gateway
-  wait_port 127.0.0.1 "$FRONT_PORT" 240 frontend
-  maybe_rebuild_search
+  start_svc gateway "$BACKEND" ./app/gateway -f "$ETC_DIR/app/gateway/etc/gateway.yaml" || return $?
+  frontend_up || return $?
+  proxy_up || return $?
+  wait_port 127.0.0.1 "$GATEWAY_PORT" 240 gateway || return $?
+  wait_port 127.0.0.1 "$FRONT_PORT" 240 frontend || return $?
+  maybe_rebuild_search || return $?
   echo "entry http://127.0.0.1:$ENTRY_PORT/  (page=$(http_code "http://127.0.0.1:$ENTRY_PORT/") api=$(http_code "http://127.0.0.1:$ENTRY_PORT/api/v1/"))"
 }
 
-app_down() {
-  local name
+rollback_app_starts() {
+  local index name step_status status=0
+  for ((index = ${#APP_UP_STARTED_SERVICES[@]} - 1; index >= 0; index--)); do
+    name="${APP_UP_STARTED_SERVICES[index]}"
+    if [[ "$name" == "proxy" ]]; then
+      if proxy_down; then
+        :
+      else
+        step_status=$?
+        [[ "$status" -ne 0 ]] || status="$step_status"
+      fi
+    elif stop_svc "$name"; then
+      :
+    else
+      step_status=$?
+      [[ "$status" -ne 0 ]] || status="$step_status"
+    fi
+  done
+  return "$status"
+}
+
+app_up_locked() {
+  local status rollback_status=0
+  APP_UP_STARTED_SERVICES=()
+  APP_UP_TRACK_STARTS=1
+  if app_up_steps; then
+    APP_UP_TRACK_STARTS=0
+    return 0
+  else
+    status=$?
+  fi
+  APP_UP_TRACK_STARTS=0
+
+  echo "application startup failed with status $status; rolling back" >&2
+  rollback_app_starts || rollback_status=$?
+  if [[ "$rollback_status" -ne 0 ]]; then
+    echo "application rollback also failed with status $rollback_status" >&2
+  fi
+  return "$status"
+}
+
+app_up() {
+  with_app_lifecycle_lock exclusive app_up_locked
+}
+
+listening_port_pids() {
+  local port="$1"
+  if command -v ss >/dev/null 2>&1; then
+    (ss -H -ltnp "sport = :$port" 2>/dev/null || true) | awk -v port="$port" '
+      {
+        local_address = $4
+        if (local_address != "127.0.0.1:" port &&
+            local_address != "0.0.0.0:" port &&
+            local_address != "*:" port &&
+            local_address != "[::]:" port &&
+            local_address != "[::ffff:127.0.0.1]:" port) {
+          next
+        }
+        line = $0
+        while (match(line, /pid=[0-9]+/)) {
+          print substr(line, RSTART + 4, RLENGTH - 4)
+          line = substr(line, RSTART + RLENGTH)
+        }
+      }' | sort -u
+    return 0
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -t -iTCP@127.0.0.1:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true
+  fi
+}
+
+stop_owned_port() {
+  local name="$1" port="$2" pid found=0 step_status status=0
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    found=1
+    if service_process_can_be_stopped "$name" "$pid"; then
+      echo "stopping orphaned $name on :$port pid=$pid"
+      if stop_tree "$name" "$pid"; then
+        :
+      else
+        step_status=$?
+        [[ "$status" -ne 0 ]] || status="$step_status"
+      fi
+    else
+      echo "leaving unknown process on :$port pid=$pid (not managed $name)" >&2
+      [[ "$status" -ne 0 ]] || status=1
+    fi
+  done < <(listening_port_pids "$port")
+  if port_open 127.0.0.1 "$port"; then
+    if [[ "$found" == "0" ]]; then
+      echo "leaving unknown process on :$port (owner could not be verified)" >&2
+    else
+      echo "critical port :$port remains occupied after stopping $name" >&2
+    fi
+    [[ "$status" -ne 0 ]] || status=1
+  fi
+  return "$status"
+}
+
+app_down_locked() {
+  local name step_status status=0
   while IFS= read -r name; do
-    stop_svc "$name"
+    if stop_svc "$name"; then
+      :
+    else
+      step_status=$?
+      [[ "$status" -ne 0 ]] || status="$step_status"
+    fi
   done < <(all_app_names | tac)
-  proxy_down
-  if port_open 127.0.0.1 "$FRONT_PORT"; then
-    fuser -k "$FRONT_PORT/tcp" >/dev/null 2>&1 || true
+  if proxy_down; then
+    :
+  else
+    step_status=$?
+    [[ "$status" -ne 0 ]] || status="$step_status"
   fi
-  if port_open 127.0.0.1 "$GATEWAY_PORT"; then
-    fuser -k "$GATEWAY_PORT/tcp" >/dev/null 2>&1 || true
+  if stop_owned_port frontend "$FRONT_PORT"; then
+    :
+  else
+    step_status=$?
+    [[ "$status" -ne 0 ]] || status="$step_status"
   fi
+  if stop_owned_port gateway "$GATEWAY_PORT"; then
+    :
+  else
+    step_status=$?
+    [[ "$status" -ne 0 ]] || status="$step_status"
+  fi
+  return "$status"
+}
+
+app_down() {
+  with_app_lifecycle_lock exclusive app_down_locked
 }
 
 pid_state() {
   local name="$1"
   local pidfile="$PID_DIR/$name.pid"
-  if [[ ! -f "$pidfile" ]]; then
+  if [[ ! -e "$pidfile" && ! -L "$pidfile" ]]; then
     printf '%-18s %s\n' "$name" "no-pid"
     return
   fi
   local pid
-  pid="$(cat "$pidfile")"
-  if kill -0 "$pid" 2>/dev/null; then
+  if pid="$(validated_service_pid "$name" "$pidfile")"; then
     printf '%-18s alive pid=%s\n' "$name" "$pid"
+  elif pid="$(read_service_pidfile "$pidfile" 2>/dev/null)" &&
+    managed_process_group_matches "$name" "$pid" "$pidfile"; then
+    printf '%-18s ORPHAN group=%s\n' "$name" "$pid"
   else
-    printf '%-18s DEAD  pid=%s\n' "$name" "$pid"
+    printf '%-18s %s\n' "$name" "stale-pid"
   fi
 }
 
-stack_status() {
+stack_status_locked() {
   echo "== containers =="
   compose ps --format 'table {{.Name}}\t{{.Service}}\t{{.Status}}' || true
   if docker inspect "$PROXY_NAME" >/dev/null 2>&1; then
@@ -1010,4 +1988,38 @@ stack_status() {
   printf ':%s front  %s\n' "$FRONT_PORT" "$(http_code "http://127.0.0.1:$FRONT_PORT/")"
   printf ':3100 loki  %s\n' "$(http_code "http://127.0.0.1:3100/ready")"
   printf ':9136 agent %s\n' "$(http_code "http://127.0.0.1:9136/metrics")"
+}
+
+stack_status() {
+  with_app_lifecycle_lock shared stack_status_locked
+}
+
+stack_up_locked() {
+  app_down_locked || return $?
+  middleware_up_locked || return $?
+  app_up_locked || return $?
+  stack_status_locked || return $?
+}
+
+stack_up() {
+  with_app_lifecycle_lock exclusive stack_up_locked
+}
+
+stack_down_locked() {
+  app_down_locked || return $?
+  middleware_down_locked || return $?
+  echo "stopped"
+}
+
+stack_down() {
+  with_app_lifecycle_lock exclusive stack_down_locked
+}
+
+stack_restart_locked() {
+  stack_down_locked || return $?
+  stack_up_locked || return $?
+}
+
+stack_restart() {
+  with_app_lifecycle_lock exclusive stack_restart_locked
 }

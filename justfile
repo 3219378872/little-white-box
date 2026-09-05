@@ -12,19 +12,30 @@ default:
 
 # 全量启动：先停旧应用，再迁移中间件，最后启动同一源码版本的应用
 up:
-    just app-down
-    just middleware-up
-    just app-up
-    just status
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    stack_up
 
 # 全量停止：应用进程、反代、中间件容器（保留数据卷）
-down: app-down middleware-down
-    @echo "stopped"
+down:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    stack_down
 
 # 重启全栈
 restart:
-    just down
-    just up
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    stack_restart
 
 # 当前容器、进程和入口探测
 status:
