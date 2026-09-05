@@ -16,6 +16,20 @@
   push/pop 返回；该导航不一定改写浏览器地址，不能用 URL 未变化判断点击无效。
 - Mock 浏览器场景只证明界面与协议适配，不证明真实检索、模型质量或生产 SLO。
 
+### 同日整合复验与端点切换
+
+- 按人类要求，将本地 env 的 `ASSISTANT_LLM_ENDPOINT` 改为 `https://api.weblearning.fun/v1`；
+  `glm-5.3-flash`、`responses` 与现有凭据保持不变，env 权限仍为 `0600`。下文旧 mine 地址是
+  历史快照，不再代表本次正常栈的实际配置。
+- 正常 `just up` 与 worker post-canary readiness 通过；检查进程配置确认未使用 fixture，
+  fallback 未启用、Tavily 使用默认端点。基础真实模型生成/SSE 重连 1 passed（13.28s）；
+  正常 provider 全量黑盒 116 passed、5 skipped（231.37s），跳过项要求专用 fixture。
+- 严格 fixture 研究闭环 4 passed（6.45s）、reset/replay 1 passed（1.23s）已独立通过。
+  桌面亮色、移动亮色/暗色的 Mock 浏览器问答、两张来源卡、引用导航及返回通过；不替代真实模型。
+- 新端点的长工具链仍有失败记录：protocol v2 本地 run `302` 完成 4 次社区搜索、14 次原文读取，
+  第 5 轮模型调用三次 timeout，约 353.03s 后以 `LLM_UNAVAILABLE` 结束，未发布不完整答案。
+  没有为该失败更换模型、延长超时或放宽断言；真实模型质量与生产 SLO 门禁仍开放。
+
 ## 当时可用入口
 
 | 入口 | 地址 |
