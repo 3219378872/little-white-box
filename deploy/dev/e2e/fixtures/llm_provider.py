@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 CANARY_TOOL = "assistant_capability_canary"
+CANARY_CALL_ID = "fixture-canary-call"
 RESET_MARKER = "E2E_STREAM_RESET_MARKER"
 RESEARCH_MARKER = "E2E_RESEARCH_MARKER"
 WATCH_MARKER = "UNTRUSTED_WATCH_HITS_JSON"
@@ -56,9 +57,9 @@ class Handler(BaseHTTPRequestHandler):
                 }]})
             return
 
-        serialized = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
-        if CANARY_TOOL in serialized:
-            self._canary(body, serialized)
+        canary_stage = self._canary_stage(body)
+        if canary_stage is not None:
+            self._canary(body, canary_stage)
             return
         scenario_marker = self._latest_user_marker(body)
         try:
@@ -82,12 +83,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._response("fixture response")
 
-    def _canary(self, body, serialized):
-        if "function_call_output" in serialized:
+    def _canary(self, body, stage):
+        if stage == "output":
             self._response("canary acknowledged")
             return
         tools = body.get("tools") or []
-        if not any(tool.get("name") == CANARY_TOOL for tool in tools):
+        if stage != "request" or not any(
+                isinstance(tool, dict) and tool.get("name") == CANARY_TOOL
+                for tool in tools):
             self.send_error(400)
             return
         self._json({
@@ -95,7 +98,7 @@ class Handler(BaseHTTPRequestHandler):
             "model": "fixture-model",
             "output": [{
                 "type": "function_call",
-                "call_id": "fixture-canary-call",
+                "call_id": CANARY_CALL_ID,
                 "name": CANARY_TOOL,
                 "arguments": json.dumps({"nonce": "agent-canary"}),
             }],
@@ -266,6 +269,30 @@ class Handler(BaseHTTPRequestHandler):
             if selected is not None:
                 latest = selected
         return latest
+
+    @staticmethod
+    def _canary_stage(body):
+        call_ids = set()
+        output_ids = set()
+        for item in body.get("input") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "function_call" and item.get("name") == CANARY_TOOL:
+                call_id = item.get("call_id") or item.get("id")
+                if call_id:
+                    call_ids.add(call_id)
+            elif item.get("type") == "function_call_output":
+                call_id = item.get("call_id")
+                if call_id:
+                    output_ids.add(call_id)
+        if call_ids & output_ids:
+            return "output"
+
+        tools = body.get("tools") or []
+        if any(isinstance(tool, dict) and tool.get("name") == CANARY_TOOL
+               for tool in tools):
+            return "request"
+        return None
 
     @staticmethod
     def _input_text(content):
