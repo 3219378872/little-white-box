@@ -111,6 +111,7 @@ load_env() {
   [[ "$env_status" -eq 0 ]] || return "$env_status"
   normalize_assistant_agent_metrics_port || return $?
   export ASSISTANT_LLM_MODEL_SMALL="${ASSISTANT_LLM_MODEL_SMALL:-}"
+  export TAVILY_ENDPOINT="${TAVILY_ENDPOINT:-}"
   export ASSISTANT_LLM_REVIEW_MODEL="${ASSISTANT_LLM_REVIEW_MODEL:-}"
   export ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
   export ASSISTANT_LLM_CACHE_WRITE_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_CACHE_WRITE_COST_PER_MILLION_TOKENS:-0}"
@@ -947,8 +948,35 @@ apply_sql_patches() {
   echo "applying ${#patches[@]} idempotent sql patch(es)"
   local sql
   for sql in "${patches[@]}"; do
+    if [[ "${sql##*/}" == 20260829_assistant_runtime_v3.sql ]]; then
+      require_safe_assistant_baseline || return $?
+    fi
     mysql_root <"$sql" || return $?
   done
+}
+
+require_safe_assistant_baseline() {
+  local marker_table marker_count tables table count
+  marker_table="$(mysql_root -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='xbh_assistant' AND table_name='runtime_marker'")" || return $?
+  if [[ "$marker_table" == 1 ]]; then
+    marker_count="$(mysql_root -N -B -e "SELECT COUNT(*) FROM xbh_assistant.runtime_marker WHERE name='assistant_runtime_v3'")" || return $?
+    if [[ "$marker_count" == 1 ]]; then
+      return 0
+    fi
+  fi
+  tables="$(mysql_root -N -B -e "SELECT table_name FROM information_schema.tables WHERE table_schema='xbh_assistant' AND table_type='BASE TABLE' ORDER BY table_name")" || return $?
+  while IFS= read -r table; do
+    [[ -n "$table" ]] || continue
+    if [[ ! "$table" =~ ^[a-zA-Z0-9_]+$ ]]; then
+      echo "refusing legacy Assistant reset with an unexpected table name" >&2
+      return 1
+    fi
+    count="$(mysql_root -N -B -e "SELECT EXISTS(SELECT 1 FROM xbh_assistant.\`$table\` LIMIT 1)")" || return $?
+    if [[ "$count" != 0 ]]; then
+      echo "refusing legacy Assistant reset: migration marker missing and existing data found" >&2
+      return 1
+    fi
+  done <<<"$tables"
 }
 
 require_apps_stopped_for_patches() {
@@ -1720,7 +1748,12 @@ restore_agent_after_fixture() {
 }
 
 run_agent_reset_test_with_fixture() {
-  local agent_row="$1"
+  local agent_row="$1" scenario="${2:-reset}" test_path reset_flag=0 research_flag=0
+  case "$scenario" in
+    reset) test_path="$ROOT/deploy/dev/e2e/test_assistant.py::test_agent_stream_reset_replay"; reset_flag=1 ;;
+    research) test_path="$ROOT/deploy/dev/e2e/test_assistant_research.py"; research_flag=1 ;;
+    *) echo "unsupported assistant fixture scenario" >&2; return 2 ;;
+  esac
   stop_svc assistant-agent || return $?
   (
     export ASSISTANT_LLM_ENABLED=true
@@ -1736,14 +1769,19 @@ run_agent_reset_test_with_fixture() {
     export ASSISTANT_LLM_CACHE_WRITE_COST_PER_MILLION_TOKENS=0
     export ASSISTANT_LLM_REASONING_COST_PER_MILLION_TOKENS=0
     export ASSISTANT_LLM_FALLBACK_ENABLED=false
+    if [[ "$scenario" == research ]]; then
+      export TAVILY_API_KEY=fixture-only
+      export TAVILY_ENDPOINT="http://127.0.0.1:$AGENT_FIXTURE_PORT"
+    fi
     start_row "$agent_row"
   ) || return $?
-  E2E_EXPECT_ASSISTANT_RESET=1 PYTHONDONTWRITEBYTECODE=1 \
+  E2E_EXPECT_ASSISTANT_RESET="$reset_flag" E2E_EXPECT_ASSISTANT_RESEARCH="$research_flag" PYTHONDONTWRITEBYTECODE=1 \
     python3 -m pytest -v \
-    "$ROOT/deploy/dev/e2e/test_assistant.py::test_agent_stream_reset_replay"
+    "$test_path"
 }
 
 e2e_agent_reset_locked() {
+  local scenario="${1:-reset}"
   load_env || return $?
   ensure_assistant_db_env || return $?
   secure_runtime_paths || return $?
@@ -1766,7 +1804,7 @@ e2e_agent_reset_locked() {
     close_app_lifecycle_lock_fd || exit $?
     exec env "$MANAGED_PROCESS_TOKEN_ENV=$fixture_token" \
       setsid python3 "$ROOT/deploy/dev/e2e/fixtures/llm_provider.py" \
-      --port "$AGENT_FIXTURE_PORT"
+      --port "$AGENT_FIXTURE_PORT" --strict
   ) >>"$fixture_log" 2>&1 </dev/null &
   fixture_pid=$!
   record_started_pid llm-fixture "$fixture_pid" "$fixture_pidfile" "$fixture_token" || return $?
@@ -1791,7 +1829,7 @@ e2e_agent_reset_locked() {
 
   AGENT_FIXTURE_RESTORE=1
   trap restore_agent_after_fixture EXIT
-  if run_agent_reset_test_with_fixture "$agent_row"; then
+  if run_agent_reset_test_with_fixture "$agent_row" "$scenario"; then
     test_status=0
   else
     test_status=$?
@@ -1806,6 +1844,10 @@ e2e_agent_reset_locked() {
 
 e2e_agent_reset() {
   with_app_lifecycle_lock exclusive e2e_agent_reset_locked
+}
+
+e2e_agent_research() {
+  with_app_lifecycle_lock exclusive e2e_agent_reset_locked research
 }
 
 all_app_names() {

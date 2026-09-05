@@ -108,6 +108,14 @@ e2e-agent-reset:
     source "$ROOT/deploy/dev/stack.sh"
     e2e_agent_reset
 
+# 结构化问答、社区/外部来源与原子回答发布的确定性真实栈门禁
+e2e-agent-research:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    source deploy/dev/stack.sh
+    e2e_agent_research
+
 # 只起/停 Docker 中间件
 middleware-up:
     #!/usr/bin/env bash

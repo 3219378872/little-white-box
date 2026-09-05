@@ -25,7 +25,8 @@ def cleanup_created_posts():
     return failures
 
 
-def parse_sse_stream(resp, max_frames=1000):
+def parse_sse_stream(resp, max_frames=1000, stop_types=None):
+    stop_types = {"done", "error"} if stop_types is None else set(stop_types)
     frames = []
     buf = b""
     done = False
@@ -40,7 +41,7 @@ def parse_sse_stream(resp, max_frames=1000):
             for line in raw.decode("utf-8", errors="replace").splitlines():
                 if line.startswith("data: "):
                     frames.append(json.loads(line[len("data: "):]))
-            if frames and frames[-1].get("type") in {"done", "error"}:
+            if frames and frames[-1].get("type") in stop_types:
                 done = True
         if done or len(frames) >= max_frames:
             break
