@@ -627,8 +627,15 @@ service_owner_matches() {
 }
 
 service_process_can_be_stopped() {
-  local name="$1" pid="$2" pidfile owner
+  local name="$1" pid="$2" fence_mode="${3:-current}" expected_token="${4:-}"
+  local pidfile owner
   service_process_matches "$name" "$pid" || return 1
+  if [[ "$fence_mode" == "token" ]]; then
+    [[ "$expected_token" == "$name:"* ]] || return 1
+    process_has_owner_token "$pid" "$expected_token"
+    return $?
+  fi
+  [[ "$fence_mode" == "current" || "$fence_mode" == "legacy" ]] || return 1
   pidfile="$PID_DIR/$name.pid"
   owner="$(pid_owner_file "$pidfile")"
   if [[ -e "$owner" || -L "$owner" ]]; then
@@ -636,6 +643,54 @@ service_process_can_be_stopped() {
     return $?
   fi
   return 0
+}
+
+# app-down removes stale pid/owner files before its port fallback runs. Capture
+# whether the service was token-fenced at entry so that cleanup cannot silently
+# downgrade it to legacy executable-only ownership.
+capture_service_stop_fence() {
+  local name="$1" mode_var="$2" token_var="$3" pidfile owner token=""
+  local mode="legacy"
+  pidfile="$PID_DIR/$name.pid"
+  owner="$(pid_owner_file "$pidfile")"
+  if [[ -e "$owner" || -L "$owner" ]]; then
+    mode="token"
+    token="$(read_service_owner_token "$name" "$pidfile" 2>/dev/null || true)"
+    if [[ -z "$token" ]]; then
+      echo "preserving invalid $name owner metadata as a fail-closed stop fence" >&2
+    fi
+  fi
+  printf -v "$mode_var" '%s' "$mode"
+  printf -v "$token_var" '%s' "$token"
+}
+
+restore_service_stop_fence() {
+  local name="$1" fence_mode="$2" token="$3" pidfile owner owner_tmp status
+  [[ "$fence_mode" == "token" ]] || return 0
+  pidfile="$PID_DIR/$name.pid"
+  owner="$(pid_owner_file "$pidfile")"
+  owner_tmp="$owner.tmp.$BASHPID.$RANDOM"
+  if printf '%s\n' "$token" >"$owner_tmp"; then
+    :
+  else
+    status=$?
+    rm -f "$owner_tmp" 2>/dev/null || true
+    return "$status"
+  fi
+  if chmod 600 "$owner_tmp"; then
+    :
+  else
+    status=$?
+    rm -f "$owner_tmp" 2>/dev/null || true
+    return "$status"
+  fi
+  if mv -f "$owner_tmp" "$owner"; then
+    :
+  else
+    status=$?
+    rm -f "$owner_tmp" 2>/dev/null || true
+    return "$status"
+  fi
 }
 
 process_stat_group() {
@@ -699,20 +754,10 @@ managed_process_group_matches() {
 }
 
 remove_service_state() {
-  local pidfile="$1" owner step_status status=0
+  local pidfile="$1" owner
   owner="$(pid_owner_file "$pidfile")"
-  if rm -f "$pidfile"; then
-    :
-  else
-    status=$?
-  fi
-  if rm -f "$owner"; then
-    :
-  else
-    step_status=$?
-    [[ "$status" -ne 0 ]] || status="$step_status"
-  fi
-  return "$status"
+  rm -f "$pidfile" || return $?
+  rm -f "$owner"
 }
 
 remove_stale_service_state() {
@@ -984,14 +1029,26 @@ stoppable_process_group_running() {
 }
 
 stop_owned_process_group() {
-  local name="$1" pgid="$2" i pidfile owner token=""
-  pidfile="$PID_DIR/$name.pid"
-  owner="$(pid_owner_file "$pidfile")"
-  if [[ -e "$owner" || -L "$owner" ]]; then
-    token="$(read_service_owner_token "$name" "$pidfile")" || {
+  local name="$1" pgid="$2" fence_mode="${3:-current}" expected_token="${4:-}"
+  local i pidfile owner token=""
+  if [[ "$fence_mode" == "token" ]]; then
+    if [[ "$expected_token" != "$name:"* ]]; then
       echo "refusing to stop $name group=$pgid: invalid owner token" >&2
       return 1
-    }
+    fi
+    token="$expected_token"
+  elif [[ "$fence_mode" == "current" || "$fence_mode" == "legacy" ]]; then
+    pidfile="$PID_DIR/$name.pid"
+    owner="$(pid_owner_file "$pidfile")"
+    if [[ -e "$owner" || -L "$owner" ]]; then
+      token="$(read_service_owner_token "$name" "$pidfile")" || {
+        echo "refusing to stop $name group=$pgid: invalid owner token" >&2
+        return 1
+      }
+    fi
+  else
+    echo "refusing to stop $name group=$pgid: invalid stop fence mode" >&2
+    return 1
   fi
   if ! process_group_running "$pgid"; then
     return 0
@@ -1323,8 +1380,9 @@ start_row() {
 }
 
 stop_tree() {
-  local name="$1" pid="$2" i group_owned=0
-  if ! service_process_can_be_stopped "$name" "$pid"; then
+  local name="$1" pid="$2" fence_mode="${3:-current}" expected_token="${4:-}"
+  local i group_owned=0
+  if ! service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then
     if service_process_matches "$name" "$pid"; then
       echo "refusing to stop $name pid=$pid: owner token mismatch" >&2
       return 1
@@ -1335,16 +1393,17 @@ stop_tree() {
     group_owned=1
   fi
   if [[ "$group_owned" == "1" ]]; then
-    stop_owned_process_group "$name" "$pid"
+    stop_owned_process_group "$name" "$pid" "$fence_mode" "$expected_token"
     return $?
   else
-    if ! kill "$pid" 2>/dev/null && service_process_can_be_stopped "$name" "$pid"; then
+    if ! kill "$pid" 2>/dev/null &&
+      service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then
       echo "failed to send TERM to $name pid=$pid" >&2
       return 1
     fi
   fi
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if ! service_process_can_be_stopped "$name" "$pid"; then
+    if ! service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then
       if service_process_matches "$name" "$pid"; then
         echo "not escalating stop for $name: pid $pid owner token changed" >&2
         return 1
@@ -1354,7 +1413,7 @@ stop_tree() {
     fi
     sleep 0.2
   done
-  if ! service_process_can_be_stopped "$name" "$pid"; then
+  if ! service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then
     if service_process_matches "$name" "$pid"; then
       echo "not escalating stop for $name: pid $pid owner token changed" >&2
       return 1
@@ -1362,12 +1421,12 @@ stop_tree() {
     return 0
   fi
   if ! kill -9 "$pid" 2>/dev/null &&
-    service_process_can_be_stopped "$name" "$pid"; then
+    service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then
     echo "failed to send KILL to $name pid=$pid" >&2
     return 1
   fi
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if ! service_process_can_be_stopped "$name" "$pid"; then
+    if ! service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then
       if service_process_matches "$name" "$pid"; then
         echo "$name pid $pid changed owner while stopping" >&2
         return 1
@@ -1565,6 +1624,17 @@ all_app_names() {
   printf '%s\n' gateway frontend log-maintainer
 }
 
+validate_all_app_processes() {
+  local name pidfile
+  while IFS= read -r name; do
+    pidfile="$PID_DIR/$name.pid"
+    if ! validated_service_pid "$name" "$pidfile" >/dev/null; then
+      echo "$name is not running after application startup" >&2
+      return 1
+    fi
+  done < <(all_app_names)
+}
+
 middleware_up_locked() {
   load_env || return $?
   secure_runtime_paths || return $?
@@ -1652,8 +1722,15 @@ ensure_web_canvaskit() {
 }
 
 proxy_up() {
-  local was_running=0 running_state
-  if docker inspect "$PROXY_NAME" >/dev/null 2>&1; then
+  local was_running=0 running_state container_names status
+  if container_names="$(docker ps -a --format '{{.Names}}')"; then
+    :
+  else
+    status=$?
+    echo "failed to list Docker containers while starting $PROXY_NAME" >&2
+    return "$status"
+  fi
+  if grep -Fxq -- "$PROXY_NAME" <<<"$container_names"; then
     running_state="$(docker inspect -f '{{.State.Running}}' "$PROXY_NAME")" || return $?
     [[ "$running_state" == "true" ]] && was_running=1
     docker rm -f "$PROXY_NAME" >/dev/null || return $?
@@ -1664,6 +1741,11 @@ proxy_up() {
     nginx:stable-alpine >/dev/null || return $?
   if [[ "$was_running" == "0" ]]; then
     track_app_started_service proxy
+  fi
+  running_state="$(docker inspect -f '{{.State.Running}}' "$PROXY_NAME")" || return $?
+  if [[ "$running_state" != "true" ]]; then
+    echo "$PROXY_NAME exited during startup; check its Docker logs" >&2
+    return 1
   fi
 }
 
@@ -1809,7 +1891,9 @@ app_up_steps() {
   proxy_up || return $?
   wait_port 127.0.0.1 "$GATEWAY_PORT" 240 gateway || return $?
   wait_port 127.0.0.1 "$FRONT_PORT" 240 frontend || return $?
+  wait_http "http://127.0.0.1:$ENTRY_PORT/" 60 proxy-entry || return $?
   maybe_rebuild_search || return $?
+  validate_all_app_processes || return $?
   echo "entry http://127.0.0.1:$ENTRY_PORT/  (page=$(http_code "http://127.0.0.1:$ENTRY_PORT/") api=$(http_code "http://127.0.0.1:$ENTRY_PORT/api/v1/"))"
 }
 
@@ -1885,13 +1969,14 @@ listening_port_pids() {
 }
 
 stop_owned_port() {
-  local name="$1" port="$2" pid found=0 step_status status=0
+  local name="$1" port="$2" fence_mode="${3:-current}" expected_token="${4:-}"
+  local pid found=0 step_status status=0
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue
     found=1
-    if service_process_can_be_stopped "$name" "$pid"; then
+    if service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then
       echo "stopping orphaned $name on :$port pid=$pid"
-      if stop_tree "$name" "$pid"; then
+      if stop_tree "$name" "$pid" "$fence_mode" "$expected_token"; then
         :
       else
         step_status=$?
@@ -1915,6 +2000,9 @@ stop_owned_port() {
 
 app_down_locked() {
   local name step_status status=0
+  local frontend_fence_mode frontend_fence_token gateway_fence_mode gateway_fence_token
+  capture_service_stop_fence frontend frontend_fence_mode frontend_fence_token || return $?
+  capture_service_stop_fence gateway gateway_fence_mode gateway_fence_token || return $?
   while IFS= read -r name; do
     if stop_svc "$name"; then
       :
@@ -1929,16 +2017,22 @@ app_down_locked() {
     step_status=$?
     [[ "$status" -ne 0 ]] || status="$step_status"
   fi
-  if stop_owned_port frontend "$FRONT_PORT"; then
+  if stop_owned_port frontend "$FRONT_PORT" "$frontend_fence_mode" "$frontend_fence_token"; then
     :
   else
     step_status=$?
+    if ! restore_service_stop_fence frontend "$frontend_fence_mode" "$frontend_fence_token"; then
+      echo "failed to restore frontend owner fence after port cleanup failure" >&2
+    fi
     [[ "$status" -ne 0 ]] || status="$step_status"
   fi
-  if stop_owned_port gateway "$GATEWAY_PORT"; then
+  if stop_owned_port gateway "$GATEWAY_PORT" "$gateway_fence_mode" "$gateway_fence_token"; then
     :
   else
     step_status=$?
+    if ! restore_service_stop_fence gateway "$gateway_fence_mode" "$gateway_fence_token"; then
+      echo "failed to restore gateway owner fence after port cleanup failure" >&2
+    fi
     [[ "$status" -ne 0 ]] || status="$step_status"
   fi
   return "$status"

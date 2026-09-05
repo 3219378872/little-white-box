@@ -325,11 +325,13 @@ start_row() {{
   track_app_started_service "$name"
 }}
 wait_port() {{ record wait_port; }}
+wait_http() {{ record wait_http; }}
 wait_topics() {{ record wait_topics; }}
 start_svc() {{ record start_svc; track_app_started_service "$1"; }}
 frontend_up() {{ record frontend_up; track_app_started_service frontend; }}
 proxy_up() {{ record proxy_up; track_app_started_service proxy; }}
 maybe_rebuild_search() {{ record maybe_rebuild_search; }}
+validate_all_app_processes() {{ record validate_all_app_processes; }}
 http_code() {{ printf 200; }}
 app_down() {{ record app_down; return 73; }}
 stop_svc() {{ record "stop:$1"; }}
@@ -343,7 +345,9 @@ app_up
             self.assertIn("start:assistant-agent", recorded)
             self.assertIn("frontend_up", recorded)
             self.assertIn("proxy_up", recorded)
+            self.assertIn("wait_http", recorded)
             self.assertIn("maybe_rebuild_search", recorded)
+            self.assertIn("validate_all_app_processes", recorded)
             self.assertFalse(any(event.startswith("stop:") for event in recorded))
             self.assertNotIn("proxy_down", recorded)
             self.assertIn("entry http://127.0.0.1:", result.stdout)
@@ -408,6 +412,97 @@ printf 'status=%s\\n' "$status"
             self.assertNotIn("stop_port:gateway", recorded)
             self.assertIn("startup failed with status 42", result.stderr)
             self.assertIn("rollback also failed with status 73", result.stderr)
+
+    def test_app_up_rolls_back_when_same_origin_entry_never_becomes_ready(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            events = temp / "events"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export TEST_EVENTS={shlex.quote(str(events))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
+source {shlex.quote(str(STACK))}
+record() {{ builtin printf '%s\n' "$1" >>"$TEST_EVENTS"; }}
+load_env() {{ return 0; }}
+ensure_assistant_db_env() {{ return 0; }}
+secure_runtime_paths() {{ return 0; }}
+clear_sensitive_assistant_logs() {{ return 0; }}
+wipe_legacy_assistant_redis() {{ return 0; }}
+prepare_etc() {{ return 0; }}
+start_log_maintainer() {{ return 0; }}
+start_row() {{ return 0; }}
+wait_port() {{ return 0; }}
+wait_topics() {{ return 0; }}
+start_svc() {{ return 0; }}
+frontend_up() {{ return 0; }}
+proxy_up() {{ track_app_started_service proxy; }}
+wait_http() {{ record wait_http; return 67; }}
+maybe_rebuild_search() {{ record maybe_rebuild_search; }}
+proxy_down() {{ record proxy_down; }}
+set +e
+app_up
+status=$?
+set -e
+builtin printf 'status=%s\n' "$status"
+"""
+            result = run_bash(script)
+            recorded = events.read_text(encoding="utf-8").splitlines()
+
+            self.assertIn("status=67", result.stdout)
+            self.assertEqual(recorded, ["wait_http", "proxy_down"])
+            self.assertIn("startup failed with status 67", result.stderr)
+
+    def test_app_up_final_sweep_detects_worker_that_exits_during_later_steps(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            events = temp / "events"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export TEST_EVENTS={shlex.quote(str(events))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
+source {shlex.quote(str(STACK))}
+agent_alive=0
+load_env() {{ return 0; }}
+ensure_assistant_db_env() {{ return 0; }}
+secure_runtime_paths() {{ return 0; }}
+clear_sensitive_assistant_logs() {{ return 0; }}
+wipe_legacy_assistant_redis() {{ return 0; }}
+prepare_etc() {{ return 0; }}
+start_log_maintainer() {{ return 0; }}
+start_row() {{
+  name="${{1%%|*}}"
+  if [[ "$name" == assistant-agent ]]; then
+    agent_alive=1
+    track_app_started_service assistant-agent
+  fi
+}}
+wait_port() {{ return 0; }}
+wait_topics() {{ return 0; }}
+start_svc() {{ return 0; }}
+frontend_up() {{ return 0; }}
+proxy_up() {{ return 0; }}
+wait_http() {{ return 0; }}
+maybe_rebuild_search() {{ agent_alive=0; }}
+all_app_names() {{ builtin printf '%s\n' assistant-agent; }}
+validated_service_pid() {{ [[ "$agent_alive" == 1 ]]; }}
+stop_svc() {{ builtin printf 'stop:%s\n' "$1" >>"$TEST_EVENTS"; }}
+set +e
+app_up
+status=$?
+set -e
+builtin printf 'status=%s\n' "$status"
+"""
+            result = run_bash(script)
+
+            self.assertIn("status=1", result.stdout)
+            self.assertEqual(
+                events.read_text(encoding="utf-8").splitlines(),
+                ["stop:assistant-agent"],
+            )
+            self.assertIn(
+                "assistant-agent is not running after application startup",
+                result.stderr,
+            )
 
     def test_middleware_up_stops_at_first_locked_callback_failure(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1039,20 +1134,30 @@ printf 'status=%s group_alive=%s\n' "$status" "$group_alive"
     def test_stop_service_propagates_pidfile_removal_failure(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             pidfile = Path(tmp_dir) / "gateway.pid"
+            owner = Path(f"{pidfile}.owner")
             pidfile.write_text("4242\n", encoding="ascii")
+            owner.write_text("gateway:test:token:1\n", encoding="ascii")
             script = f"""
 export ROOT={shlex.quote(str(ROOT))}
 export PID_DIR={shlex.quote(str(pidfile.parent))}
+export TEST_PIDFILE={shlex.quote(str(pidfile))}
 source {shlex.quote(str(STACK))}
 validated_service_pid() {{ printf '4242\n'; }}
 stop_tree() {{ return 0; }}
-rm() {{ return 19; }}
+rm() {{
+  target="${{@: -1}}"
+  [[ "$target" != "$TEST_PIDFILE" ]] || return 19
+  command rm "$@"
+}}
 stop_svc gateway
 """
             result = run_bash(script, check=False)
 
             self.assertEqual(result.returncode, 19)
             self.assertTrue(pidfile.exists())
+            self.assertEqual(
+                owner.read_text(encoding="ascii"), "gateway:test:token:1\n"
+            )
 
     def test_failed_start_cleanup_keeps_recovery_state_and_status(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1176,7 +1281,13 @@ printf 'status=%s\n' "$status"
         self.assertEqual(stack.count("record_started_pid "), 4)
         self.assertEqual(stack.count("close_app_lifecycle_lock_fd || exit $?"), 4)
         self.assertEqual(stack.count("cleanup_failed_service_start "), 4)
-        self.assertEqual(stack.count("if ! validated_service_pid "), 4)
+        for validation in (
+            'if ! validated_service_pid "$name" "$pidfile" >/dev/null; then',
+            'if ! validated_service_pid log-maintainer "$pidfile" >/dev/null; then',
+            'if ! validated_service_pid llm-fixture "$fixture_pidfile" >/dev/null; then',
+            'if ! validated_service_pid frontend "$pidfile" >/dev/null; then',
+        ):
+            self.assertIn(validation, stack)
         self.assertNotIn('echo $! >"$pidfile"', stack)
         self.assertNotIn('echo $! >"$fixture_pidfile"', stack)
 
@@ -1327,15 +1438,35 @@ stop_owned_port gateway 8888
                 stop_test_process(process)
 
     def test_proxy_rollback_tracking_uses_previous_running_state(self):
-        for running_state, expected_starts in (("false", "proxy"), ("true", "none")):
-            with self.subTest(running_state=running_state):
+        for existed, running_state, expected_starts in (
+            ("0", "false", "proxy"),
+            ("1", "false", "proxy"),
+            ("1", "true", "none"),
+        ):
+            with self.subTest(existed=existed, running_state=running_state):
                 script = f"""
 export ROOT={shlex.quote(str(ROOT))}
+export TEST_PROXY_EXISTS={existed}
 export TEST_PROXY_RUNNING={running_state}
 source {shlex.quote(str(STACK))}
 docker() {{
+  if [[ "$1" == ps ]]; then
+    [[ "$TEST_PROXY_EXISTS" == 0 ]] || builtin printf '%s\n' "$PROXY_NAME"
+    return 0
+  fi
   if [[ "$1" == inspect && "${{2:-}}" == -f ]]; then
     builtin printf '%s\n' "$TEST_PROXY_RUNNING"
+    return 0
+  fi
+  if [[ "$1" == rm ]]; then
+    TEST_PROXY_EXISTS=0
+    TEST_PROXY_RUNNING=false
+    return 0
+  fi
+  if [[ "$1" == run ]]; then
+    TEST_PROXY_EXISTS=1
+    TEST_PROXY_RUNNING=true
+    return 0
   fi
   return 0
 }}
@@ -1350,6 +1481,48 @@ fi
                 result = run_bash(script)
 
                 self.assertIn(f"starts={expected_starts}", result.stdout)
+
+    def test_proxy_up_rejects_container_that_exits_immediately(self):
+        script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+source {shlex.quote(str(STACK))}
+docker() {{
+  if [[ "$1" == ps ]]; then
+    return 0
+  fi
+  if [[ "$1" == inspect && "${{2:-}}" == -f ]]; then
+    builtin printf '%s\n' false
+    return 0
+  fi
+  return 0
+}}
+APP_UP_TRACK_STARTS=1
+set +e
+proxy_up
+status=$?
+set -e
+builtin printf 'status=%s starts=%s\n' "$status" "${{APP_UP_STARTED_SERVICES[*]}}"
+"""
+        result = run_bash(script)
+
+        self.assertIn("status=1 starts=proxy", result.stdout)
+        self.assertIn("exited during startup", result.stderr)
+
+    def test_proxy_up_propagates_container_listing_failure(self):
+        script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+source {shlex.quote(str(STACK))}
+docker() {{ return 54; }}
+set +e
+proxy_up
+status=$?
+set -e
+builtin printf 'status=%s\n' "$status"
+"""
+        result = run_bash(script)
+
+        self.assertIn("status=54", result.stdout)
+        self.assertIn("failed to list Docker containers", result.stderr)
 
     def test_proxy_down_propagates_container_listing_failure(self):
         script = f"""
@@ -1476,6 +1649,164 @@ app_down
                 self.assertIn("not managed gateway", result.stderr)
             finally:
                 stop_test_process(server)
+
+    @unittest.skipUnless(
+        Path("/proc/self/environ").exists() and shutil.which("perl"),
+        "requires procfs and perl",
+    )
+    def test_app_down_preserves_initial_owner_fence_for_port_fallback(self):
+        for service_name in ("gateway", "frontend"):
+            with self.subTest(service_name=service_name):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    temp = Path(tmp_dir)
+                    run_dir = temp / "run"
+                    bin_dir = run_dir / "bin"
+                    pid_dir = run_dir / "pids"
+                    bin_dir.mkdir(parents=True)
+                    pid_dir.mkdir()
+                    port = unused_loopback_port()
+                    other_port = unused_loopback_port()
+                    while other_port == port:
+                        other_port = unused_loopback_port()
+                    environment = os.environ.copy()
+                    environment["XBH_STACK_PROCESS_TOKEN"] = (
+                        f"{service_name}:actual:token:2"
+                    )
+                    if service_name == "gateway":
+                        executable = bin_dir / "gateway"
+                        shutil.copy2(shutil.which("perl"), executable)
+                        executable.chmod(0o700)
+                        process = subprocess.Popen(
+                            [
+                                str(executable),
+                                "-MIO::Socket::INET",
+                                "-e",
+                                "my $s=IO::Socket::INET->new("
+                                "LocalAddr=>'127.0.0.1',LocalPort=>$ARGV[0],"
+                                "Listen=>16,ReuseAddr=>1) or die $!; "
+                                "while (my $c=$s->accept()) { close $c }",
+                                str(port),
+                            ],
+                            env=environment,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True,
+                        )
+                    else:
+                        bundle = temp / "bundle"
+                        bundle.mkdir()
+                        (bundle / "index.html").write_text(
+                            "fixture", encoding="ascii"
+                        )
+                        process = subprocess.Popen(
+                            [
+                                sys.executable,
+                                str(ROOT / "deploy" / "dev" / "serve_release.py"),
+                                str(port),
+                                str(bundle),
+                            ],
+                            env=environment,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True,
+                        )
+                    try:
+                        wait_for_port(port)
+                        pidfile = pid_dir / f"{service_name}.pid"
+                        owner = Path(f"{pidfile}.owner")
+                        pidfile.write_text("99999999\n", encoding="ascii")
+                        owner.write_text(
+                            f"{service_name}:stale:token:1\n", encoding="ascii"
+                        )
+                        front_port = port if service_name == "frontend" else other_port
+                        gateway_port = port if service_name == "gateway" else other_port
+                        script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export RUN_DIR={shlex.quote(str(run_dir))}
+export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
+export PID_DIR={shlex.quote(str(pid_dir))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
+export FRONT_PORT={front_port}
+export GATEWAY_PORT={gateway_port}
+source {shlex.quote(str(STACK))}
+proxy_down() {{ return 0; }}
+set +e
+app_down
+first_status=$?
+app_down
+second_status=$?
+set -e
+builtin printf 'status=%s,%s\n' "$first_status" "$second_status"
+"""
+                        result = run_bash(script)
+
+                        self.assertIn("status=1,1", result.stdout)
+                        self.assertIsNone(process.poll())
+                        self.assertEqual(
+                            owner.read_text(encoding="ascii"),
+                            f"{service_name}:stale:token:1\n",
+                        )
+                        self.assertIn(
+                            f"not managed {service_name}", result.stderr
+                        )
+                    finally:
+                        stop_test_process(process)
+
+    @unittest.skipUnless(
+        Path("/proc/self/environ").exists() and shutil.which("perl"),
+        "requires procfs and perl",
+    )
+    def test_app_down_port_fallback_still_stops_legacy_ownerless_process(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            run_dir = temp / "run"
+            bin_dir = run_dir / "bin"
+            pid_dir = run_dir / "pids"
+            bin_dir.mkdir(parents=True)
+            pid_dir.mkdir()
+            gateway = bin_dir / "gateway"
+            shutil.copy2(shutil.which("perl"), gateway)
+            gateway.chmod(0o700)
+            port = unused_loopback_port()
+            front_port = unused_loopback_port()
+            while front_port == port:
+                front_port = unused_loopback_port()
+            process = subprocess.Popen(
+                [
+                    str(gateway),
+                    "-MIO::Socket::INET",
+                    "-e",
+                    "my $s=IO::Socket::INET->new("
+                    "LocalAddr=>'127.0.0.1',LocalPort=>$ARGV[0],"
+                    "Listen=>16,ReuseAddr=>1) or die $!; "
+                    "while (my $c=$s->accept()) { close $c }",
+                    str(port),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            try:
+                wait_for_port(port)
+                script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export RUN_DIR={shlex.quote(str(run_dir))}
+export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
+export PID_DIR={shlex.quote(str(pid_dir))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
+export FRONT_PORT={front_port}
+export GATEWAY_PORT={port}
+source {shlex.quote(str(STACK))}
+proxy_down() {{ return 0; }}
+app_down
+"""
+                run_bash(script)
+
+                process.wait(timeout=3)
+            finally:
+                stop_test_process(process)
 
     def test_stop_service_terminates_matching_runtime_binary(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
