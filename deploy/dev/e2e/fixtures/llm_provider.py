@@ -60,17 +60,22 @@ class Handler(BaseHTTPRequestHandler):
         if CANARY_TOOL in serialized:
             self._canary(body, serialized)
             return
-        if RESEARCH_MARKER in serialized:
-            self._research(body)
+        scenario_marker = self._latest_user_marker(body)
+        try:
+            if scenario_marker == RESEARCH_MARKER:
+                self._research(body)
+                return
+            if scenario_marker == WATCH_MARKER:
+                self._watch(body)
+                return
+        except (TypeError, ValueError):
+            self._json({"error": {"message": "invalid fixture marker payload"}}, status=400)
             return
-        if WATCH_MARKER in serialized:
-            self._watch(body)
-            return
-        if self.server.strict and RESET_MARKER not in serialized:
+        if self.server.strict and scenario_marker != RESET_MARKER:
             self._json({"error": {"message": "fixture only serves marked test requests"}}, status=503)
             return
         if body.get("stream") is True:
-            if RESET_MARKER in serialized:
+            if scenario_marker == RESET_MARKER:
                 self._reset_stream(self.server.state.next_reset_attempt())
             else:
                 self._completed_stream("fixture response")
@@ -233,9 +238,7 @@ class Handler(BaseHTTPRequestHandler):
         outputs = {}
         marker_seen = False
         for item in body.get("input") or []:
-            content = item.get("content", "")
-            if isinstance(content, list):
-                content = "".join(part.get("text", "") for part in content)
+            content = Handler._input_text(item.get("content", ""))
             if item.get("role") == "user" and marker in content:
                 raw = content.split(marker, 1)[1].lstrip(" :\r\n\t")
                 payload = json.loads(raw)
@@ -245,6 +248,32 @@ class Handler(BaseHTTPRequestHandler):
             if marker_seen and item.get("type") == "function_call_output":
                 outputs[item.get("call_id")] = item.get("output", "")
         return payload, outputs
+
+    @staticmethod
+    def _latest_user_marker(body):
+        latest = None
+        for item in body.get("input") or []:
+            if not isinstance(item, dict) or item.get("role") != "user":
+                continue
+            content = Handler._input_text(item.get("content", ""))
+            position = len(content)
+            selected = None
+            for marker in (RESET_MARKER, RESEARCH_MARKER, WATCH_MARKER):
+                candidate = content.find(marker)
+                if 0 <= candidate < position:
+                    position = candidate
+                    selected = marker
+            if selected is not None:
+                latest = selected
+        return latest
+
+    @staticmethod
+    def _input_text(content):
+        if isinstance(content, list):
+            return "".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            )
+        return content if isinstance(content, str) else ""
 
     @staticmethod
     def _sources(raw):

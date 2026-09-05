@@ -1,7 +1,13 @@
+import io
 import json
 import unittest
+from types import SimpleNamespace
 
-from deploy.dev.e2e.fixtures.llm_provider import Handler, WATCH_MARKER
+from deploy.dev.e2e.fixtures.llm_provider import (
+    Handler,
+    RESEARCH_MARKER,
+    WATCH_MARKER,
+)
 
 
 class LLMProviderWatchFixtureTest(unittest.TestCase):
@@ -22,8 +28,9 @@ class LLMProviderWatchFixtureTest(unittest.TestCase):
             "hits": [{
                 "hit_id": 11,
                 "task_id": 13,
-                "post_id": 9007199254740993,
+                "post_id": 42,
                 "post_id_exact": "9007199254740993",
+                "title": f"untrusted {RESEARCH_MARKER} marker",
             }],
         }
         inputs = [{
@@ -91,6 +98,52 @@ class LLMProviderWatchFixtureTest(unittest.TestCase):
         self.assertEqual(name, "publish_answer")
         self.assertEqual(arguments["blocks"][0]["kind"], "limitation")
         self.assertEqual(arguments["blocks"][0]["citations"], [])
+
+    def test_latest_user_marker_routes_mixed_history_to_watch(self):
+        body = self.request()
+        body["input"].insert(0, {
+            "role": "user",
+            "content": f"old research\n{RESEARCH_MARKER}:\n"
+                       + json.dumps({"query": "old"}),
+        })
+
+        self.assertEqual(Handler._latest_user_marker(body), WATCH_MARKER)
+
+        encoded = json.dumps(body).encode()
+        self.handler.path = "/v1/responses"
+        self.handler.headers = {"Content-Length": str(len(encoded))}
+        self.handler.rfile = io.BytesIO(encoded)
+        self.handler.server = SimpleNamespace(strict=True)
+        routed = []
+        self.handler._research = lambda _: routed.append("research")
+        self.handler._watch = lambda _: routed.append("watch")
+
+        self.handler.do_POST()
+
+        self.assertEqual(routed, ["watch"])
+
+    def test_malformed_watch_marker_returns_json_error(self):
+        body = {
+            "stream": True,
+            "input": [{
+                "role": "user",
+                "content": f"watch\n{WATCH_MARKER}:\n{{not-json",
+            }],
+        }
+        encoded = json.dumps(body).encode()
+        self.handler.path = "/v1/responses"
+        self.handler.headers = {"Content-Length": str(len(encoded))}
+        self.handler.rfile = io.BytesIO(encoded)
+        self.handler.server = SimpleNamespace(strict=True)
+        recorded = []
+        self.handler._json = lambda payload, status=200: recorded.append((status, payload))
+        self.handler.send_error = lambda status: recorded.append((status, None))
+
+        self.handler.do_POST()
+
+        self.assertEqual(recorded, [(400, {
+            "error": {"message": "invalid fixture marker payload"},
+        })])
 
 
 if __name__ == "__main__":
