@@ -2305,6 +2305,15 @@ pid_state() {
   fi
 }
 
+algorithm_port_state() {
+  local port="$1"
+  if port_open 127.0.0.1 "$port"; then
+    printf 'open'
+  else
+    printf 'closed'
+  fi
+}
+
 stack_status_locked() {
   normalize_assistant_agent_metrics_port || return $?
   echo "== containers =="
@@ -2314,6 +2323,11 @@ stack_status_locked() {
   else
     echo "$PROXY_NAME absent"
   fi
+  echo
+  echo "== algorithm =="
+  COMPOSE_PROFILES=algorithm compose ps \
+    --format 'table {{.Name}}\t{{.Service}}\t{{.Status}}' \
+    embedding-service online-infer || true
   echo
   echo "== app pids =="
   local name
@@ -2329,6 +2343,8 @@ stack_status_locked() {
   printf ':3100 loki  %s\n' "$(http_code "http://127.0.0.1:3100/ready")"
   printf ':%s agent %s\n' "$ASSISTANT_AGENT_METRICS_PORT" \
     "$(http_code "http://127.0.0.1:$ASSISTANT_AGENT_METRICS_PORT/metrics")"
+  printf ':50051 embed %s\n' "$(algorithm_port_state 50051)"
+  printf ':9025 infer  %s\n' "$(algorithm_port_state 9025)"
 }
 
 stack_status() {
@@ -2348,6 +2364,7 @@ stack_up() {
 
 stack_down_locked() {
   app_down_locked || return $?
+  algorithm_down_locked || return $?
   middleware_down_locked || return $?
   echo "stopped"
 }
@@ -2357,7 +2374,10 @@ stack_down() {
 }
 
 stack_restart_locked() {
-  stack_down_locked || return $?
+  # Bounce app + default middleware only. Algorithm profile containers stay
+  # up across restart so the next up does not re-download model weights.
+  app_down_locked || return $?
+  middleware_down_locked || return $?
   stack_up_locked || return $?
 }
 

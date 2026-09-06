@@ -1770,6 +1770,79 @@ builtin printf 'status=%s\n' "$status"
 
             self.assertIn("status=44", result.stdout)
 
+    def test_stack_down_stops_algorithm_before_middleware(self):
+        stack = STACK.read_text(encoding="utf-8")
+        down_fn = re.search(
+            r"^stack_down_locked\(\) \{\n(?:.*\n)*?^\}\n",
+            stack,
+            re.M,
+        )
+        self.assertIsNotNone(down_fn)
+        self.assertIn("algorithm_down_locked", down_fn.group(0))
+        self.assertLess(
+            down_fn.group(0).index("algorithm_down_locked"),
+            down_fn.group(0).index("middleware_down_locked"),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            run_dir = temp / "run"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export RUN_DIR={shlex.quote(str(run_dir))}
+export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
+export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
+source {shlex.quote(str(STACK))}
+app_down_locked() {{ echo app_down; }}
+algorithm_down_locked() {{ echo algorithm_down; }}
+middleware_down_locked() {{ echo middleware_down; }}
+stack_down_locked
+"""
+            result = run_bash(script)
+
+        self.assertEqual(
+            [line for line in result.stdout.splitlines() if line],
+            ["app_down", "algorithm_down", "middleware_down", "stopped"],
+        )
+
+    def test_stack_restart_does_not_stop_algorithm(self):
+        stack = STACK.read_text(encoding="utf-8")
+        restart_fn = re.search(
+            r"^stack_restart_locked\(\) \{\n(?:.*\n)*?^\}\n",
+            stack,
+            re.M,
+        )
+        self.assertIsNotNone(restart_fn)
+        self.assertNotIn("algorithm_down", restart_fn.group(0))
+        self.assertNotIn("stack_down_locked", restart_fn.group(0))
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp = Path(tmp_dir)
+            run_dir = temp / "run"
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+export RUN_DIR={shlex.quote(str(run_dir))}
+export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
+export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
+source {shlex.quote(str(STACK))}
+app_down_locked() {{ echo app_down; }}
+algorithm_down_locked() {{ echo algorithm_down; }}
+middleware_down_locked() {{ echo middleware_down; }}
+stack_up_locked() {{ echo stack_up; }}
+stack_restart_locked
+"""
+            result = run_bash(script)
+
+        self.assertEqual(
+            [line for line in result.stdout.splitlines() if line],
+            ["app_down", "middleware_down", "stack_up"],
+        )
+        self.assertNotIn("algorithm_down", result.stdout)
+
     @unittest.skipUnless(Path("/proc/self/environ").exists(), "requires procfs")
     def test_owner_token_mismatch_fences_matching_runtime_binary(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

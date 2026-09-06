@@ -19,7 +19,7 @@ up:
     source "$ROOT/deploy/dev/stack.sh"
     stack_up
 
-# 全量停止：应用进程、反代、中间件容器（保留数据卷）
+# 全量停止：应用进程、反代、算法容器、中间件容器（保留数据卷）
 down:
     #!/usr/bin/env bash
     set -euo pipefail

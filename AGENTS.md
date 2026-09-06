@@ -61,7 +61,10 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 
 - `just up` / `just down`（alias `start` / `stop`）：`up` 先停止现有应用，再执行
   `middleware-up` 的 schema patch，最后启动同一源码版本的应用；禁止带旧进程重放迁移。
-- `just restart`；`just status`：容器、进程 pid 存活与关键端口探测
+  `down` 会停应用、反代、algorithm profile（embedding-service / online-infer）和默认中间件
+  容器，保留数据卷。`up` 不启也不停 infer。
+- `just restart`：只反弹应用与默认中间件，已在跑的 infer 保持不动；`just status`：容器、
+  进程 pid 存活与关键端口探测（含 `:50051` / `:9025`）
 - `just rotate-db-credentials`：只轮换本地 app/E2E MySQL 凭据并原子改写 env，不输出新值；
   下一次 `middleware-up` 创建独立账号并撤销旧默认账号
 - `just seed` = `seed-dev-user` + `seed-eval-corpus`，均可单独执行
