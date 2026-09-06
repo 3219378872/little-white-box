@@ -332,12 +332,14 @@ def test_confirm_unknown_call_rejected(user):
         client.set_agent_consent(False)
 
 
-def test_watch_crud_and_unknown_condition(user, published_post):
+def test_watch_crud_and_unknown_condition(user, make_user, published_post):
     client = user.client
-    post = published_post(user.client)
+    other = make_user()
+    post = published_post(other.client)
     detail = client.post_detail(post["postId"])
     assert detail.status_code == 200, detail.text[:200]
     author_id = detail.json()["authorId"]
+    assert author_id != user.id
     payload = {
         "conditionType": "author_new_post",
         "targetType": "author",
@@ -402,6 +404,49 @@ def test_watch_crud_and_unknown_condition(user, published_post):
         assert remaining.status_code == 200, remaining.text[:200]
         assert all(item.get("id") != task_id
                    for item in remaining.json().get("tasks") or [])
+
+
+def test_watch_rejects_own_author_and_revision(user, make_user, published_post):
+    client = user.client
+    other = make_user()
+    own_post = published_post(client)
+    other_post = published_post(other.client)
+    _grant(client)
+    created_ids = []
+    try:
+        assert_error(client.create_assistant_watch({
+            "conditionType": "author_new_post",
+            "targetType": "author",
+            "targetId": user.id,
+        }), 400, 6005)
+        assert_error(client.create_assistant_watch({
+            "conditionType": "post_revised",
+            "targetType": "post",
+            "targetId": own_post["postId"],
+        }), 400, 6005)
+
+        other_author = client.create_assistant_watch({
+            "conditionType": "author_new_post",
+            "targetType": "author",
+            "targetId": other.id,
+        })
+        _assert_assistant_store_ok(other_author, "watch other author")
+        assert other_author.status_code == 200, other_author.text[:200]
+        created_ids.append(other_author.json()["task"])
+
+        other_rev = client.create_assistant_watch({
+            "conditionType": "post_revised",
+            "targetType": "post",
+            "targetId": other_post["postId"],
+        })
+        _assert_assistant_store_ok(other_rev, "watch other revision")
+        assert other_rev.status_code == 200, other_rev.text[:200]
+        created_ids.append(other_rev.json()["task"])
+    finally:
+        for task in created_ids:
+            deleted = client.delete_assistant_watch(task["id"], task["version"])
+            _assert_assistant_store_ok(deleted, "DELETE /assistant/watch")
+        client.set_agent_consent(False)
 
 
 def test_watch_hit_route_removed(user):
