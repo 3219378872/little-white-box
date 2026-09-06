@@ -454,13 +454,14 @@ def test_watch_hit_route_removed(user):
     assert listed.status_code == 404, listed.text[:200]
 
 
-def test_watch_matcher_delivers_assistant_message(user, published_post):
+def test_watch_matcher_delivers_assistant_message(user, make_user, published_post):
     client = user.client
+    author = make_user()
     _grant(client)
     payload = {
         "conditionType": "author_new_post",
         "targetType": "author",
-        "targetId": user.id,
+        "targetId": author.id,
     }
     created = client.create_assistant_watch(payload)
     _assert_assistant_store_ok(created, "POST /assistant/watch matcher")
@@ -473,7 +474,7 @@ def test_watch_matcher_delivers_assistant_message(user, published_post):
         before = client.get_assistant_thread()
         _assert_assistant_store_ok(before, "GET /assistant/thread before watch")
         before_unread = (before.json().get("thread") or {}).get("unreadCount", 0)
-        post = published_post(client)
+        post = published_post(author.client)
 
         def unread_increased():
             listed = client.get_assistant_thread()
