@@ -2,6 +2,34 @@
 
 工作区根目录备忘，不是任一子仓正式知识链的一部分。事实以当时代码、配置和现场命令为准。
 
+## 2026-09-06 Heybox Android 视觉迁移
+
+- 前端 `9b3fba2` 将现有界面统一到用户提供的 Heybox Android 1.3.394 视觉语言，保留小白盒名称
+  和既有业务范围；未新增游戏库/商城等功能，未修改后端、API、SDK 或原有输入限制。
+- 前端本地门禁：analyze 零问题、492 项测试通过、knowledge-check 通过；Mock Web 5 组视口/主题
+  共 120 图、Android API 36 x64 模拟器亮暗共 28 图。详情入栈时底栏和 Android 状态栏安全区问题
+  经实拍发现后修复，并补充自动回归。详见前端
+  [视觉验收](little-white-box-front/docs/knowledge/evidence/EVD-heybox-presentation-2026-09-06.md)。
+- `just up` 已以主分支源码恢复真实本地栈，`:3002` 页面 200、`/api/v1/health/ready` 为 `ready`，
+  9 项依赖全部 `ok`，assistant-agent `alive ready`。`just e2e deploy/dev/e2e/test_health.py`
+  为 5 passed。没有改模型、provider、凭据或就绪门槛。
+- 真实浏览器使用项目本地测试账号，移动亮暗与桌面亮色共 24 图，覆盖登录、Feed、详情/评论、
+  搜索结果、个人页、消息和编辑器；66 次真实 API 响应无 HTTP 失败，0 pageerror、0 failed request。
+  本轮未触发真实长链 Agent 生成，不能据此关闭既有真实模型质量/SLO 门禁。
+- 证据位于 `/tmp/xbh-heybox-migration-20260906.4EhL6I`，最终结果分别为
+  `web-navigation-final/report.json`、`android-navigation-final/report.json`、
+  `assistant-browser-final/report.json` 与 `real-browser/report.json`。`:43007` 是独立 Mock
+  预览，使用 Python 内置静态服务，避免被联调栈误认为正在运行的受管前端。临时任务工作树已清理，
+  预览产物和 Android x64 Mock 验收包已独立保留；原参考 APK 与参考环境保持不动。
+
+### 本轮恢复时的环境问题
+
+Docker 重启后，动态地址容器 `xbh-milvus-etcd` 占用了业务 `xbh-etcd` 配置的固定地址
+`172.28.3.5`，`just up` 报 `failed to set up container networking: Address already in use`。
+只断开前者网络连接，先启动业务 etcd，再携原别名重连前者，动态分配到 `172.28.3.18`；未删容器、
+卷或修改 Compose。两套 etcd、Milvus、online-infer 随后均 healthy。该操作只恢复本次运行态，
+未来重启仍需留意动态分配与固定地址冲突，不能把本次恢复当作持久化网络配置修复。
+
 ## 2026-09-05 社区 Agent 闭环
 
 - 新客户端通过 `clientProtocolVersion=2` 启用结构化问答与原文摘录卡片。回答接口为
