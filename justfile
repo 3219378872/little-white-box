@@ -46,6 +46,24 @@ status:
     source "$ROOT/deploy/dev/stack.sh"
     stack_status
 
+# 校验 gitlink、跨仓固定引用及前后端知识门禁
+knowledge-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    knowledge_check
+
+# 在临时 clone 中校验后端生成物，并只读核对前端 Gateway SDK
+contract-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    contract_check
+
 # 原子轮换 app/e2e MySQL 凭据；不改 provider/gateway 等其他配置，不输出新值
 rotate-db-credentials:
     #!/usr/bin/env bash

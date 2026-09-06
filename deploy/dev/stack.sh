@@ -59,6 +59,21 @@ MQ_SERVICES=(
   "assistant-agent|$BACKEND|./app/assistant/worker|-f|$ETC_DIR/app/assistant/worker/etc/agent.yaml"
 )
 
+knowledge_check() {
+  (
+    cd "$ROOT"
+    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
+      deploy.dev.test_workspace_checks
+  ) || return $?
+  PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/deploy/dev/workspace_checks.py" \
+    knowledge --root "$ROOT" --backend "$BACKEND" --frontend "$FRONTEND"
+}
+
+contract_check() {
+  PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/deploy/dev/workspace_checks.py" \
+    contract --root "$ROOT" --backend "$BACKEND" --frontend "$FRONTEND"
+}
+
 compose() {
   MINIO_ROOT_USER="${MINIO_ROOT_USER:-admin}" \
   MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-Xbh@Minio2024!}" \
