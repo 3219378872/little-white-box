@@ -5,6 +5,7 @@ refactor-content-community/
 *.swp
 .DS_Store
 .venv/
+.venv-knowledge/
 node_modules/
 __pycache__/
 *.py[cod]

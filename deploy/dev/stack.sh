@@ -6,6 +6,7 @@ umask 077
 ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 BACKEND="${BACKEND:-$ROOT/little-white-box-content-community}"
 FRONTEND="${FRONTEND:-$ROOT/little-white-box-front}"
+KNOWLEDGE_PYTHON="${KNOWLEDGE_PYTHON:-$ROOT/.venv-knowledge/bin/python}"
 RUN_DIR="${RUN_DIR:-/tmp/xbh-run}"
 LOG_DIR="${LOG_DIR:-$RUN_DIR/logs}"
 PID_DIR="${PID_DIR:-$RUN_DIR/pids}"
@@ -59,18 +60,35 @@ MQ_SERVICES=(
   "assistant-agent|$BACKEND|./app/assistant/worker|-f|$ETC_DIR/app/assistant/worker/etc/agent.yaml"
 )
 
+knowledge_setup() {
+  python3 -m venv "$ROOT/.venv-knowledge" || return $?
+  "$ROOT/.venv-knowledge/bin/python" -m pip install \
+    -r "$ROOT/deploy/dev/requirements-knowledge.txt" || return $?
+  env -u KNOWLEDGE_PYTHON make -C "$BACKEND" knowledge-setup || return $?
+  env -u KNOWLEDGE_PYTHON make -C "$FRONTEND" knowledge-setup
+}
+
+knowledge_ready() {
+  command -v "$KNOWLEDGE_PYTHON" >/dev/null || {
+    echo 'Run just knowledge-setup first (or set KNOWLEDGE_PYTHON)' >&2
+    return 2
+  }
+}
+
 knowledge_check() {
+  knowledge_ready || return $?
   (
     cd "$ROOT"
-    PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v \
+    PYTHONDONTWRITEBYTECODE=1 "$KNOWLEDGE_PYTHON" -m unittest -v \
       deploy.dev.test_workspace_checks
   ) || return $?
-  PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/deploy/dev/workspace_checks.py" \
+  PYTHONDONTWRITEBYTECODE=1 "$KNOWLEDGE_PYTHON" "$ROOT/deploy/dev/workspace_checks.py" \
     knowledge --root "$ROOT" --backend "$BACKEND" --frontend "$FRONTEND"
 }
 
 contract_check() {
-  PYTHONDONTWRITEBYTECODE=1 python3 "$ROOT/deploy/dev/workspace_checks.py" \
+  knowledge_ready || return $?
+  PYTHONDONTWRITEBYTECODE=1 "$KNOWLEDGE_PYTHON" "$ROOT/deploy/dev/workspace_checks.py" \
     contract --root "$ROOT" --backend "$BACKEND" --frontend "$FRONTEND"
 }
 

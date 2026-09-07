@@ -4,10 +4,18 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 import os
+import json
+import hashlib
+
+try:
+    import yaml
+except ImportError as exc:
+    raise SystemExit(
+        "Run just knowledge-setup to install isolated tool dependencies"
+    ) from exc
 from pathlib import Path, PurePosixPath
 import re
 import shlex
@@ -40,21 +48,10 @@ EXTERNAL_REF_RE = re.compile(
     r"(?P<repository>little-white-box(?:-content-community|-front)?)"
     r"@(?P<sha>[0-9a-f]{40}):(?P<target_id>" + TARGET_ID_PATTERN + r")\Z"
 )
-REQUIREMENT_BULLET_RES = {
-    repository: re.compile(
-        r"^ {0,3}[-*][ \t]+`(?P<requirement>"
-        + requirement_id.pattern.removesuffix(r"\Z")
-        + r")`[：:][ \t]*\S"
-    )
-    for repository, requirement_id in REQUIREMENT_ID_RES.items()
-}
-TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{3,}:?$")
-REQUIREMENT_TABLE_HEADERS = {"id", "requirement", "条款"}
 GENERATED_SDK_FILES = (
     PurePosixPath("api/gateway.dart"),
     PurePosixPath("data/gateway.dart"),
 )
-IGNORED_KNOWLEDGE_DIRECTORIES = {"archive", "proposals", "templates"}
 EVIDENCE_SCOPES = {
     "static",
     "unit",
@@ -68,15 +65,6 @@ EVIDENCE_SCOPES = {
     "production",
 }
 ROOT_EVIDENCE_PATH = PurePosixPath("deploy/dev/e2e/evidence")
-LEGACY_CHILD_EVIDENCE_PATH = PurePosixPath("implementation/evidence")
-FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-FENCE_CONTENT_RE = re.compile(r"(`{3,}|~{3,})(.*)$")
-LIST_ITEM_RE = re.compile(
-    r"^(?P<indent> {0,3})(?P<marker>[-+*]|[0-9]{1,9}[.)])"
-    r"(?:(?P<spacing>[ \t]+)(?P<content>.*))?$"
-)
-ATX_HEADING_RE = re.compile(r"^ {0,3}#{1,6}(?:[ \t]+|$)")
-SETEXT_HEADING_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 
 
 class CheckError(RuntimeError):
@@ -102,19 +90,6 @@ class ExternalReference:
 class WorkspaceState:
     repositories: Mapping[str, Repository]
     revisions: Mapping[str, str]
-
-
-@dataclass(frozen=True)
-class ListContainer:
-    marker_indent: int
-    content_indent: int
-
-
-@dataclass(frozen=True)
-class FenceCandidate:
-    marker: str
-    remainder: str
-    container: ListContainer | None
 
 
 def _format_command(command: Sequence[str]) -> str:
@@ -224,51 +199,45 @@ def run_read_only_command(
         )
 
 
-def _frontmatter_lines(text: str, *, source: str) -> list[str] | None:
+class UniqueLoader(yaml.SafeLoader):
+    pass
+
+
+def _unique_mapping(loader, node, deep=False):
+    values = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if not isinstance(key, str) or key in values:
+            raise CheckError(f"duplicate or non-text YAML key: {key!r}")
+        values[key] = loader.construct_object(value_node, deep=deep)
+    return values
+
+
+UniqueLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _unique_mapping
+)
+
+
+def parse_frontmatter(text: str, *, source: str) -> dict:
     lines = text.splitlines()
     if not lines or lines[0] != "---":
-        return None
-    for index in range(1, len(lines)):
-        if lines[index] == "---":
-            frontmatter = lines[1:index]
-            _validate_frontmatter_syntax(frontmatter, source=source)
-            return frontmatter
-    raise CheckError(
-        f"{source}: front matter starts with '---' but has no closing delimiter"
-    )
+        return {}
+    try:
+        end = lines.index("---", 1)
+        value = yaml.load("\n".join(lines[1:end]), Loader=UniqueLoader)
+    except (ValueError, yaml.YAMLError) as exc:
+        raise CheckError(f"{source}: invalid YAML frontmatter: {exc}") from exc
+    if not isinstance(value, dict):
+        raise CheckError(f"{source}: frontmatter must be a mapping")
+    return value
 
 
-def _validate_frontmatter_syntax(lines: Sequence[str], *, source: str) -> None:
-    list_key: str | None = None
-    seen_keys: set[str] = set()
-    for index, line in enumerate(lines, start=2):
-        if not line.strip():
-            continue
-        field = re.fullmatch(
-            r"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:"
-            r"(?:[ \t]+(?P<value>.*))?",
-            line,
-        )
-        if field is not None:
-            key = field.group("key")
-            if key in seen_keys:
-                raise CheckError(f"{source}:{index}: duplicate front-matter key {key}")
-            seen_keys.add(key)
-            value = field.group("value")
-            list_key = key if value is None or not value.strip() else None
-            continue
-        item = re.fullmatch(r"[ \t]+-(?:[ \t]+.*)?", line)
-        if item is not None and list_key is not None:
-            continue
-        raise CheckError(
-            f"{source}:{index}: invalid controlled YAML front-matter syntax"
-        )
-
-
-def _unquote_scalar(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
+def parse_frontmatter_scalar(text: str, key: str, *, source: str) -> str | None:
+    value = parse_frontmatter(text, source=source).get(key)
+    if isinstance(value, date):
+        value = value.isoformat()
+    if value is not None and not isinstance(value, str):
+        raise CheckError(f"{source}: {key} must be text")
     return value
 
 
@@ -276,519 +245,53 @@ def parse_document_id(text: str, *, source: str) -> str | None:
     return parse_frontmatter_scalar(text, "id", source=source)
 
 
-def parse_frontmatter_scalar(text: str, key: str, *, source: str) -> str | None:
-    lines = _frontmatter_lines(text, source=source)
-    if lines is None:
+def parse_frontmatter_list(text: str, key: str, *, source: str) -> list[str] | None:
+    value = parse_frontmatter(text, source=source).get(key)
+    if value is None:
         return None
-    values: list[str] = []
-    for line in lines:
-        match = re.fullmatch(rf"{re.escape(key)}\s*:\s*(.*?)\s*", line)
-        if match:
-            values.append(_unquote_scalar(match.group(1)))
-    if len(values) > 1:
-        raise CheckError(f"{source}: duplicate front-matter {key} fields")
-    return values[0] if values else None
-
-
-def parse_frontmatter_list(
-    text: str,
-    key: str,
-    *,
-    source: str,
-    allow_inline_empty: bool = False,
-) -> list[str] | None:
-    lines = _frontmatter_lines(text, source=source)
-    if lines is None:
-        return None
-    field_indexes = [
-        index
-        for index, line in enumerate(lines)
-        if re.fullmatch(rf"{re.escape(key)}\s*:.*", line)
-    ]
-    if not field_indexes:
-        return None
-    if len(field_indexes) > 1:
-        raise CheckError(f"{source}: duplicate {key} fields")
-
-    index = field_indexes[0]
-    header = lines[index]
-    inline = re.fullmatch(rf"{re.escape(key)}\s*:\s*(.*?)\s*", header)
-    assert inline is not None
-    inline_value = inline.group(1)
-    if inline_value:
-        if allow_inline_empty and inline_value == "[]":
-            return []
-        raise CheckError(f"{source}: {key} must be a YAML block list")
-
-    values: list[str] = []
-    for line_number in range(index + 1, len(lines)):
-        line = lines[line_number]
-        if not line.strip():
-            continue
-        if not line[:1].isspace():
-            break
-        item = re.fullmatch(r"\s+-\s+(.+?)\s*", line)
-        if item is None:
-            raise CheckError(f"{source}:{line_number + 2}: invalid {key} list item")
-        values.append(_unquote_scalar(item.group(1)))
-    return values
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise CheckError(f"{source}: {key} must be a list of non-blank text")
+    if len(set(value)) != len(value):
+        raise CheckError(f"{source}: {key} has duplicate items")
+    return value
 
 
 def parse_external_references(text: str, *, source: str) -> list[ExternalReference]:
-    raw_values = parse_frontmatter_list(text, "external_upstream", source=source)
-    if raw_values is None:
+    meta = parse_frontmatter(text, source=source)
+    if "external_upstream" not in meta:
         return []
-    if not raw_values:
-        raise CheckError(
-            f"{source}: external_upstream must contain at least one reference"
-        )
-    duplicates = sorted(
-        value for value, count in Counter(raw_values).items() if count > 1
-    )
-    if duplicates:
-        raise CheckError(
-            f"{source}: external_upstream contains duplicate reference {duplicates[0]!r}"
-        )
-
-    references: list[ExternalReference] = []
-    for value in raw_values:
-        match = EXTERNAL_REF_RE.fullmatch(value)
-        if match is None:
-            raise CheckError(
-                f"{source}: invalid external_upstream reference {value!r}; "
-                "expected repo@<40 lowercase hex sha>:<formal or requirement ID>"
-            )
-        reference = ExternalReference(**match.groupdict())
-        if not FORMAL_ID_RE.fullmatch(reference.target_id):
-            requirement_id = REQUIREMENT_ID_RES.get(reference.repository)
-            if requirement_id is None or not requirement_id.fullmatch(
-                reference.target_id
-            ):
-                raise CheckError(
-                    f"{source}: invalid requirement target for "
-                    f"{reference.repository}: {reference.target_id}"
-                )
-        references.append(reference)
+    values = parse_frontmatter_list(text, "external_upstream", source=source)
+    if not values:
+        raise CheckError(f"{source}: external_upstream must be non-empty")
+    references = []
+    for value in values:
+        references.append(parse_external_reference(value, source=source))
     return references
 
 
-def _indent_width(value: str) -> int:
-    width = 0
-    for character in value:
-        if character == "\t":
-            width += 4 - (width % 4)
-        else:
-            width += 1
-    return width
-
-
-def _dedent_columns(line: str, width: int) -> str | None:
-    if width == 0:
-        return line
-    cursor = 0
-    indentation = 0
-    while cursor < len(line) and line[cursor] in {" ", "\t"}:
-        if line[cursor] == "\t":
-            indentation += 4 - (indentation % 4)
-        else:
-            indentation += 1
-        cursor += 1
-        if indentation >= width:
-            return line[cursor:]
-    return None
-
-
-def _list_containers(line: str) -> tuple[list[ListContainer], str] | None:
-    offset = 0
-    containers: list[ListContainer] = []
-    while True:
-        item = LIST_ITEM_RE.fullmatch(line[offset:])
-        if item is None:
-            break
-        marker_start = offset + item.start("marker")
-        marker_indent = _indent_width(line[:marker_start])
-        content = item.group("content")
-        if content is None:
-            content_start = len(line)
-            content_indent = marker_indent + len(item.group("marker")) + 1
-        else:
-            content_start = offset + item.start("content")
-            content_indent = _indent_width(line[:content_start])
-        containers.append(
-            ListContainer(
-                marker_indent=marker_indent,
-                content_indent=content_indent,
-            )
-        )
-        offset = content_start
-        if content is None:
-            break
-    if not containers:
-        return None
-    return containers, line[offset:]
-
-
-def _list_container(line: str) -> tuple[ListContainer, str] | None:
-    result = _list_containers(line)
-    if result is None:
-        return None
-    containers, content = result
-    return containers[-1], content
-
-
-def _updated_list_context(
-    containers: Sequence[ListContainer], line: str
-) -> list[ListContainer]:
-    list_items = _list_containers(line)
-    if list_items is not None:
-        line_containers, _ = list_items
-        first_marker_indent = line_containers[0].marker_indent
-        ancestors = [
-            container
-            for container in containers
-            if container.content_indent <= first_marker_indent
-        ]
-        return [*ancestors, *line_containers]
-    if not line.strip():
-        return list(containers)
-    content = line.lstrip(" \t")
-    indentation = _indent_width(line[: len(line) - len(content)])
-    return [
-        container for container in containers if container.content_indent <= indentation
-    ]
-
-
-def _fence_candidate(
-    line: str, continuation_container: ListContainer | None = None
-) -> FenceCandidate | None:
-    list_content = _list_container(line)
-    if list_content is not None:
-        container, content = list_content
-        opening = FENCE_CONTENT_RE.fullmatch(content)
-    elif continuation_container is not None:
-        container = continuation_container
-        content = _dedent_columns(line, container.content_indent)
-        opening = FENCE_OPEN_RE.fullmatch(content) if content is not None else None
-    else:
-        container = None
-        opening = FENCE_OPEN_RE.fullmatch(line)
-    if opening is None:
-        return None
-    marker, remainder = opening.groups()
-    return FenceCandidate(marker, remainder, container)
-
-
-def _fence_opening(
-    line: str, continuation_container: ListContainer | None = None
-) -> FenceCandidate | None:
-    candidate = _fence_candidate(line, continuation_container)
-    if candidate is None:
-        return None
-    if candidate.marker[0] == "`" and "`" in candidate.remainder:
-        return None
-    return candidate
-
-
-def _fence_closes(line: str, fence: FenceCandidate) -> bool:
-    candidate = line.lstrip(" \t")
-    indentation = _indent_width(line[: len(line) - len(candidate)])
-    if fence.container is None:
-        if indentation > 3:
-            return False
-    elif not (
-        fence.container.content_indent
-        <= indentation
-        <= fence.container.content_indent + 3
+def parse_external_reference(value: str, *, source: str) -> ExternalReference:
+    match = EXTERNAL_REF_RE.fullmatch(value)
+    if not match:
+        raise CheckError(f"{source}: invalid external_upstream: {value}")
+    repo, sha, target = match.group("repository", "sha", "target_id")
+    if not FORMAL_ID_RE.fullmatch(target) and (
+        repo not in REQUIREMENT_ID_RES or not REQUIREMENT_ID_RES[repo].fullmatch(target)
     ):
-        return False
-    return (
-        re.fullmatch(
-            rf"{re.escape(fence.marker[0])}{{{len(fence.marker)},}}[ \t]*",
-            candidate,
+        raise CheckError(
+            f"{source}: invalid requirement target for repository: {target}"
         )
-        is not None
-    )
+    return ExternalReference(repo, sha, target)
 
 
-def _fence_container_ended(line: str, fence: FenceCandidate) -> bool:
-    if fence.container is None or not line.strip():
-        return False
-    content = line.lstrip(" \t")
-    indentation = _indent_width(line[: len(line) - len(content)])
-    return indentation < fence.container.content_indent
-
-
-def _inline_block_boundary(line: str, opener_container: ListContainer | None) -> bool:
-    if not line.strip():
-        return True
-
-    structural_line = line
-    if opener_container is not None:
-        structural_line = _dedent_columns(line, opener_container.content_indent)
-        if structural_line is None:
-            return True
-    if (
-        ATX_HEADING_RE.match(structural_line) is not None
-        or SETEXT_HEADING_RE.fullmatch(structural_line) is not None
-        or _fence_opening(structural_line) is not None
-    ):
-        return True
-
-    candidate = _list_container(line)
-    if candidate is not None:
-        return True
-    return False
-
-
-def _inline_code_span_end(
-    lines: Sequence[str],
-    start_line: int,
-    start_column: int,
-    continuation_container: ListContainer | None,
-) -> tuple[int, int] | None:
-    opening_line = lines[start_line]
-    fence_candidate = _fence_candidate(opening_line, continuation_container)
-    same_line_only = (
-        fence_candidate is not None
-        and fence_candidate.marker[0] == "`"
-        and "`" in fence_candidate.remainder
-    )
-    list_item = _list_container(opening_line)
-    opener_container = list_item[0] if list_item is not None else continuation_container
-    marker_end = start_column
-    while marker_end < len(opening_line) and opening_line[marker_end] == "`":
-        marker_end += 1
-    marker_length = marker_end - start_column
-
-    for line_index in range(start_line, len(lines)):
-        if same_line_only and line_index > start_line:
-            return None
-        line = lines[line_index]
-        if line_index > start_line and _inline_block_boundary(line, opener_container):
-            return None
-        candidate = marker_end if line_index == start_line else 0
-        while candidate < len(line):
-            candidate = line.find("`", candidate)
-            if candidate < 0:
-                break
-            candidate_end = candidate
-            while candidate_end < len(line) and line[candidate_end] == "`":
-                candidate_end += 1
-            if candidate_end - candidate == marker_length:
-                return line_index, candidate_end
-            candidate = candidate_end
-    return None
-
-
-def _masked_code_span(length: int) -> str:
-    """Mask code without promoting its trailing text to line-leading Markdown."""
-    return "x" * length
-
-
-def visible_markdown(text: str) -> str:
-    """Drop comments and fenced examples before extracting formal declarations."""
-    visible: list[str] = []
-    lines = text.splitlines()
-    fence: FenceCandidate | None = None
-    in_comment = False
-    code_span_end: tuple[int, int] | None = None
-    list_context: list[ListContainer] = []
-    for line_index, line in enumerate(lines):
-        if fence is not None:
-            if _fence_closes(line, fence):
-                fence = None
-                continue
-            if not _fence_container_ended(line, fence):
-                continue
-            fence = None
-
-        if code_span_end is None and not in_comment:
-            list_context = _updated_list_context(list_context, line)
-        continuation_container = list_context[-1] if list_context else None
-
-        visible_parts: list[str] = []
-        cursor = 0
-        if code_span_end is not None:
-            end_line, end_column = code_span_end
-            if line_index < end_line:
-                visible.append(_masked_code_span(len(line)))
-                continue
-            visible_parts.append(_masked_code_span(end_column))
-            cursor = end_column
-            code_span_end = None
-        elif not in_comment:
-            opening = _fence_opening(line, continuation_container)
-            if opening is not None:
-                fence = opening
-                continue
-
-        while cursor < len(line):
-            if in_comment:
-                end = line.find("-->", cursor)
-                if end < 0:
-                    cursor = len(line)
-                    break
-                in_comment = False
-                cursor = end + 3
-                continue
-            comment_start = line.find("<!--", cursor)
-            code_start = line.find("`", cursor)
-            if code_start >= 0 and (comment_start < 0 or code_start < comment_start):
-                code_end = _inline_code_span_end(
-                    lines,
-                    line_index,
-                    code_start,
-                    continuation_container,
-                )
-                if code_end is None:
-                    marker_end = code_start + 1
-                    while marker_end < len(line) and line[marker_end] == "`":
-                        marker_end += 1
-                    visible_parts.append(line[cursor:marker_end])
-                    cursor = marker_end
-                    continue
-                end_line, end_column = code_end
-                if end_line == line_index:
-                    visible_parts.append(line[cursor:end_column])
-                    cursor = end_column
-                    continue
-                visible_parts.append(line[cursor:code_start])
-                visible_parts.append(_masked_code_span(len(line) - code_start))
-                code_span_end = code_end
-                cursor = len(line)
-                continue
-            if comment_start < 0:
-                visible_parts.append(line[cursor:])
-                break
-            visible_parts.append(line[cursor:comment_start])
-            in_comment = True
-            cursor = comment_start + 4
-        visible.append("".join(visible_parts))
-    return "\n".join(visible)
-
-
-def _markdown_body(text: str) -> str:
-    lines = text.splitlines()
-    if not lines or lines[0] != "---":
-        return text
-    for index, line in enumerate(lines[1:], start=1):
-        if line == "---":
-            return "\n".join(lines[index + 1 :])
-    return text
-
-
-def _table_cells(line: str) -> list[str] | None:
-    leading_spaces = len(line) - len(line.lstrip(" "))
-    if leading_spaces > 3 or line[leading_spaces:].startswith("\t"):
-        return None
-    value = line.strip()
-    cells: list[str] = []
-    current: list[str] = []
-    separators = 0
-    for character in value:
-        if character == "|":
-            backslashes = 0
-            for previous in reversed(current):
-                if previous != "\\":
-                    break
-                backslashes += 1
-            if backslashes % 2 == 0:
-                cells.append("".join(current).strip())
-                current = []
-                separators += 1
-                continue
-        current.append(character)
-    if separators == 0:
-        return None
-    cells.append("".join(current).strip())
-    if cells and not cells[0]:
-        cells.pop(0)
-    if cells and not cells[-1]:
-        cells.pop()
-    return cells
-
-
-def _optional_code_value(value: str) -> str | None:
-    candidate = value.strip()
-    starts = candidate.startswith("`")
-    ends = candidate.endswith("`")
-    if starts != ends:
-        return None
-    if starts:
-        candidate = candidate[1:-1].strip()
-    return candidate
-
-
-def requirement_definitions(text: str, *, repository: str) -> list[str]:
-    requirement_id = REQUIREMENT_ID_RES.get(repository)
-    bullet_pattern = REQUIREMENT_BULLET_RES.get(repository)
-    if requirement_id is None or bullet_pattern is None:
-        raise ValueError(f"unsupported requirement repository: {repository}")
-    lines = visible_markdown(_markdown_body(text)).splitlines()
-    definitions: list[str] = []
-    index = 0
-    while index < len(lines):
-        bullet = bullet_pattern.match(lines[index])
-        if bullet is not None:
-            definitions.append(bullet.group("requirement"))
-
-        header = _table_cells(lines[index])
-        separator = _table_cells(lines[index + 1]) if index + 1 < len(lines) else None
-        normalized_header = _optional_code_value(header[0]) if header else None
-        if (
-            header
-            and len(header) >= 2
-            and all(cell.strip() for cell in header)
-            and separator
-            and normalized_header is not None
-            and normalized_header.casefold() in REQUIREMENT_TABLE_HEADERS
-            and len(separator) == len(header)
-            and all(TABLE_SEPARATOR_CELL_RE.fullmatch(cell) for cell in separator)
-        ):
-            index += 2
-            while index < len(lines):
-                row = _table_cells(lines[index])
-                if row is None or len(row) != len(header):
-                    break
-                requirement = _optional_code_value(row[0])
-                if (
-                    requirement is not None
-                    and requirement_id.fullmatch(requirement)
-                    and any(cell.strip() for cell in row[1:])
-                ):
-                    definitions.append(requirement)
-                index += 1
-            continue
-        index += 1
-    return definitions
-
-
-def _is_formal_document(path: PurePosixPath, document_id: str, repository: str) -> bool:
-    if not FORMAL_ID_RE.fullmatch(document_id):
-        return False
-    if repository == ROOT_REPOSITORY:
-        return (
-            document_id.startswith("EVD-")
-            and path.parent == ROOT_EVIDENCE_PATH
-            and path.name == f"{document_id}.md"
-        )
-    if not path.is_relative_to(PurePosixPath("docs/knowledge")):
-        return False
-    relative = path.relative_to(PurePosixPath("docs/knowledge"))
-    if any(part in IGNORED_KNOWLEDGE_DIRECTORIES for part in relative.parts):
-        return False
-    prefix = document_id.split("-", 1)[0]
-    expected_directory = {
-        "INT": "intent",
-        "SPEC": "spec",
-        "DES": "design",
-        "IMP": "implementation",
-        "EVD": "evidence",
-    }[prefix]
-    return (
-        relative.parent == PurePosixPath(expected_directory)
-        and relative.name == f"{document_id}.md"
-    )
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise CheckError(f"duplicate knowledge-export JSON key: {key}")
+        result[key] = value
+    return result
 
 
 class WorkspaceChecker:
@@ -826,6 +329,7 @@ class WorkspaceChecker:
             ),
         }
         self._target_id_cache: dict[tuple[str, str], dict[str, list[str]]] = {}
+        self._manifest_cache: dict[tuple[str, str], dict] = {}
 
     def _require_repository(self, repository: Repository) -> str:
         if not repository.path.is_dir() or not (repository.path / ".git").exists():
@@ -894,24 +398,16 @@ class WorkspaceChecker:
         return match.group(1)
 
     def _working_documents(self, repository: Repository) -> Iterable[tuple[str, str]]:
+        if repository.name != ROOT_REPOSITORY:
+            raise CheckError("child documents must be read through knowledge-export")
         base = repository.path / repository.knowledge_path
-        if not base.is_dir():
-            return
         for path in sorted(base.rglob("*.md")):
-            relative = path.relative_to(repository.path)
-            if repository.name != ROOT_REPOSITORY and any(
-                part in IGNORED_KNOWLEDGE_DIRECTORIES for part in relative.parts
-            ):
-                continue
-            knowledge_relative = path.relative_to(base)
-            if repository.name != ROOT_REPOSITORY and knowledge_relative.is_relative_to(
-                LEGACY_CHILD_EVIDENCE_PATH
-            ):
-                continue
-            try:
-                yield relative.as_posix(), path.read_text(encoding="utf-8")
-            except UnicodeDecodeError as error:
-                raise CheckError(f"knowledge document is not UTF-8: {path}") from error
+            if not path.resolve().is_relative_to(base.resolve()):
+                raise CheckError(f"root evidence escapes owned directory: {path}")
+            yield (
+                path.relative_to(repository.path).as_posix(),
+                path.read_text(encoding="utf-8"),
+            )
 
     def _validate_root_evidence_location(self) -> None:
         result = _run(
@@ -962,212 +458,227 @@ class WorkspaceChecker:
         return value
 
     def _validate_root_evidence_schema(self, state: WorkspaceState) -> int:
-        root = state.repositories[ROOT_REPOSITORY]
-        evidence_root = ROOT_EVIDENCE_PATH
-        evidence_count = 0
-        for raw_path, text in self._working_documents(root):
+        count = 0
+        for raw_path, text in self._working_documents(
+            state.repositories[ROOT_REPOSITORY]
+        ):
             path = PurePosixPath(raw_path)
-            if path == evidence_root / "README.md":
+            if path.name == "README.md" and path.parent == ROOT_EVIDENCE_PATH:
                 continue
             source = f"{ROOT_REPOSITORY}:{raw_path}"
-            if path.parent != evidence_root:
-                raise CheckError(
-                    f"{source}: integration evidence files must be direct children of "
-                    f"{evidence_root}"
-                )
-            document_id = self._required_scalar(text, "id", source=source)
-            if not document_id.startswith("EVD-") or not FORMAL_ID_RE.fullmatch(
-                document_id
+            meta = parse_frontmatter(text, source=source)
+            identity = self._required_scalar(text, "id", source=source)
+            if (
+                path.parent != ROOT_EVIDENCE_PATH
+                or path.name != identity + ".md"
+                or not identity.startswith("EVD-")
+                or not FORMAL_ID_RE.fullmatch(identity)
             ):
-                raise CheckError(f"{source}: id must be a formal EVD-* identifier")
-            if path.name != f"{document_id}.md":
-                raise CheckError(f"{source}: filename must match id ({document_id}.md)")
-
+                raise CheckError(
+                    f"{source}: root evidence must be a canonical direct EVD page"
+                )
             status = self._required_scalar(text, "status", source=source)
-            if status not in {"active", "superseded"}:
-                raise CheckError(
-                    f"{source}: status must be active or superseded, got {status!r}"
-                )
             result = self._required_scalar(text, "result", source=source)
-            if result not in {"passed", "partial", "failed", "blocked"}:
-                raise CheckError(
-                    f"{source}: result must be passed, partial, failed, or blocked; "
-                    f"got {result!r}"
-                )
-            updated_at = self._required_scalar(text, "updated_at", source=source)
-            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", updated_at):
-                raise CheckError(f"{source}: updated_at must be a valid YYYY-MM-DD")
+            if status not in {"active", "superseded"} or result not in {
+                "passed",
+                "partial",
+                "failed",
+                "blocked",
+            }:
+                raise CheckError(f"{source}: invalid evidence status/result")
+            updated = self._required_scalar(text, "updated_at", source=source)
             try:
-                date.fromisoformat(updated_at)
-            except ValueError as error:
-                raise CheckError(
-                    f"{source}: updated_at must be a valid YYYY-MM-DD"
-                ) from error
-
-            observed_commit = self._required_sha(text, "observed_commit", source=source)
-            backend_commit = self._required_sha(text, "backend_commit", source=source)
-            frontend_commit = self._required_sha(text, "frontend_commit", source=source)
+                if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", updated):
+                    raise ValueError(updated)
+                date.fromisoformat(updated)
+            except ValueError as exc:
+                raise CheckError(f"{source}: invalid evidence date") from exc
+            observed = self._required_sha(text, "observed_commit", source=source)
             self._commit_exists_and_is_reachable(
-                root, observed_commit, state.revisions[ROOT_REPOSITORY]
+                state.repositories[ROOT_REPOSITORY],
+                observed,
+                state.revisions[ROOT_REPOSITORY],
             )
-            observed_backend = self._gitlink_at_revision(
-                observed_commit, BACKEND_REPOSITORY
-            )
-            observed_frontend = self._gitlink_at_revision(
-                observed_commit, FRONTEND_REPOSITORY
+            revisions = self._reference_limits(
+                state.repositories[ROOT_REPOSITORY], raw_path, text, state
             )
             if (
-                backend_commit != observed_backend
-                or frontend_commit != observed_frontend
+                status == "active"
+                and {"backend_commit", "frontend_commit", "upstream"} & meta.keys()
             ):
                 raise CheckError(
-                    f"{source}: backend_commit/frontend_commit must match the gitlinks "
-                    f"recorded by observed_commit {observed_commit}"
+                    f"{source}: child revisions and upstream are derived, not stored"
                 )
-            if status == "active" and (
-                backend_commit != state.revisions[BACKEND_REPOSITORY]
-                or frontend_commit != state.revisions[FRONTEND_REPOSITORY]
+            for key in ("commands", "scope"):
+                values = parse_frontmatter_list(text, key, source=source)
+                if not values:
+                    raise CheckError(f"{source}: {key} must be a non-empty list")
+                if key == "scope" and not set(values) <= EVIDENCE_SCOPES:
+                    raise CheckError(f"{source}: invalid evidence scope")
+            artifacts = parse_frontmatter_list(text, "artifacts", source=source) or []
+            if (
+                status == "active"
+                and result == "passed"
+                and artifacts
+                and all(p.startswith("/tmp/") for p in artifacts)
             ):
                 raise CheckError(
-                    f"{source}: active evidence must match the current root HEAD gitlinks; "
-                    "mark stale evidence superseded and add current evidence"
+                    f"{source}: passed evidence cannot use only /tmp artifacts"
                 )
-            if status == "active":
-                changed = self._root_changes_outside_evidence(observed_commit)
-                if changed:
-                    raise CheckError(
-                        f"{source}: active evidence is stale because root assets changed "
-                        f"after observed_commit: {changed[0]}"
-                    )
-                dirty = self._root_dirty_paths_outside_evidence()
-                if dirty:
-                    raise CheckError(
-                        f"{source}: active evidence cannot be validated with root "
-                        f"changes outside {evidence_root}: {dirty[0]}"
-                    )
-
-            commands = parse_frontmatter_list(text, "commands", source=source)
-            if not commands or any(not command.strip() for command in commands):
+            for artifact in artifacts:
+                if artifact.startswith(("https://", "http://", "/tmp/")):
+                    continue
+                self._safe_input(artifact)
+                if not (self.root / artifact).is_file():
+                    raise CheckError(f"{source}: missing durable artifact: {artifact}")
+            groups = meta.get("coverage")
+            if status == "superseded" and groups is None:
+                count += 1
+                continue
+            if "covers" in meta or not isinstance(groups, list) or not groups:
                 raise CheckError(
-                    f"{source}: commands must be a non-empty YAML block list of "
-                    "non-blank commands"
+                    f"{source}: use non-empty coverage groups, not duplicated covers"
                 )
-            self._reject_duplicate_items(commands, "commands", source=source)
-            covers = parse_frontmatter_list(text, "covers", source=source)
-            if not covers:
-                raise CheckError(
-                    f"{source}: covers must be a non-empty YAML block list"
-                )
-            self._reject_duplicate_items(covers, "covers", source=source)
-            invalid_covers = [
-                requirement
-                for requirement in covers
-                if not REQUIREMENT_ID_RE.fullmatch(requirement)
-            ]
-            if invalid_covers:
-                raise CheckError(
-                    f"{source}: invalid requirement in covers: {invalid_covers[0]}"
-                )
-            scopes = parse_frontmatter_list(text, "scope", source=source)
-            if not scopes:
-                raise CheckError(f"{source}: scope must be a non-empty YAML block list")
-            self._reject_duplicate_items(scopes, "scope", source=source)
-            invalid_scopes = sorted(set(scopes) - EVIDENCE_SCOPES)
-            if invalid_scopes:
-                raise CheckError(
-                    f"{source}: invalid evidence scope: {', '.join(invalid_scopes)}"
-                )
-            references = parse_external_references(text, source=source)
-            referenced_requirements = {
-                reference.target_id
-                for reference in references
-                if REQUIREMENT_ID_RE.fullmatch(reference.target_id)
+            seen = set()
+            involved = {
+                ref.repository for ref in parse_external_references(text, source=source)
             }
-            dangling_covers = sorted(set(covers) - referenced_requirements)
-            if dangling_covers:
-                raise CheckError(
-                    f"{source}: every covers requirement must be an exact "
-                    "external_upstream target; missing " + ", ".join(dangling_covers)
-                )
-            referenced_repositories = {reference.repository for reference in references}
-            required_repositories = {BACKEND_REPOSITORY, FRONTEND_REPOSITORY}
-            if not required_repositories.issubset(referenced_repositories):
-                raise CheckError(
-                    f"{source}: external_upstream must reference both child repositories"
-                )
-
-            artifacts = parse_frontmatter_list(
-                text,
-                "artifacts",
-                source=source,
-                allow_inline_empty=True,
-            )
-            if artifacts is not None:
-                if any(not artifact.strip() for artifact in artifacts):
+            for group in groups:
+                if not isinstance(group, dict) or set(group) != {
+                    "requirements",
+                    "paths",
+                }:
                     raise CheckError(
-                        f"{source}: artifacts must not contain blank items"
+                        f"{source}: coverage group requires requirements and paths"
                     )
-                self._reject_duplicate_items(artifacts, "artifacts", source=source)
-            if status == "active" and result == "passed" and artifacts:
-                if all(
-                    artifact == "/tmp" or artifact.startswith("/tmp/")
-                    for artifact in artifacts
-                ):
-                    raise CheckError(
-                        f"{source}: active passed evidence cannot use only /tmp artifacts"
+                requirements = self._controlled_list(
+                    group["requirements"], "coverage requirements"
+                )
+                paths = self._controlled_list(
+                    group["paths"], "coverage paths", empty=result != "passed"
+                )
+                for requirement in requirements:
+                    repo, separator, target = requirement.partition(":")
+                    if (
+                        not separator
+                        or repo not in REQUIREMENT_ID_RES
+                        or not REQUIREMENT_ID_RES[repo].fullmatch(target)
+                        or requirement in seen
+                    ):
+                        raise CheckError(
+                            f"{source}: invalid or duplicate qualified requirement: {requirement}"
+                        )
+                    seen.add(requirement)
+                    involved.add(repo)
+                    matches = self._target_ids_at_revision(
+                        state.repositories[repo], revisions[repo]
+                    ).get(target, [])
+                    if len(matches) != 1:
+                        raise CheckError(
+                            f"{source}: covered requirement is missing at observation: {requirement}"
+                        )
+                for raw in paths:
+                    self._safe_input(raw)
+                    repo, commit, relative = self._input_revision(raw, revisions)
+                    exists = _run(
+                        [
+                            "git",
+                            "cat-file",
+                            "-e",
+                            f"{commit}:{'' if relative == '.' else relative}",
+                        ],
+                        cwd=repo.path,
+                        check=False,
                     )
-            evidence_count += 1
-        return evidence_count
+                    if exists.returncode:
+                        raise CheckError(
+                            f"{source}: input did not exist at observation: {raw}"
+                        )
+                if status == "active":
+                    reason = self._coverage_changes(group, revisions, state)
+                    print(
+                        f"root evidence {identity} [{', '.join(requirements)}]: {reason or result + ' at unchanged inputs'}"
+                    )
+            if not {BACKEND_REPOSITORY, FRONTEND_REPOSITORY} <= involved:
+                raise CheckError(
+                    f"{source}: cross-repository evidence must involve both children"
+                )
+            count += 1
+        return count
 
     @staticmethod
-    def _reject_duplicate_items(
-        values: Sequence[str], key: str, *, source: str
-    ) -> None:
-        duplicates = sorted(
-            value for value, count in Counter(values).items() if count > 1
-        )
-        if duplicates:
-            raise CheckError(
-                f"{source}: {key} contains duplicate item {duplicates[0]!r}"
-            )
-
-    @staticmethod
-    def _outside_root_evidence(paths: Iterable[str]) -> list[str]:
-        return [
-            raw_path
-            for raw_path in paths
-            if not PurePosixPath(raw_path).is_relative_to(ROOT_EVIDENCE_PATH)
-        ]
-
-    def _root_changes_outside_evidence(self, observed_commit: str) -> list[str]:
-        result = _run(
-            [
-                "git",
-                "log",
-                "--format=",
-                "--name-only",
-                "-z",
-                f"{observed_commit}..HEAD",
-                "--",
-            ],
-            cwd=self.root,
-            text=False,
-        )
-        paths = [os.fsdecode(path) for path in result.stdout.split(b"\0") if path]
-        return self._outside_root_evidence(paths)
-
-    def _root_dirty_paths_outside_evidence(self) -> list[str]:
-        paths: list[str] = []
-        for arguments in (
-            ("diff", "--name-only", "-z", "--"),
-            ("diff", "--cached", "--name-only", "-z", "--"),
-            ("ls-files", "--others", "--exclude-standard", "-z", "--"),
+    def _controlled_list(value, key, *, empty=False):
+        if (
+            not isinstance(value, list)
+            or (not empty and not value)
+            or any(not isinstance(item, str) or not item.strip() for item in value)
         ):
-            result = _run(["git", *arguments], cwd=self.root, text=False)
-            paths.extend(
-                os.fsdecode(path) for path in result.stdout.split(b"\0") if path
+            raise CheckError(
+                f"{key} must be a {'non-empty ' if not empty else ''}list of non-blank text"
             )
-        return self._outside_root_evidence(paths)
+        if len(set(value)) != len(value):
+            raise CheckError(f"{key} contains duplicate items")
+        return value
+
+    @staticmethod
+    def _safe_input(raw: str) -> PurePosixPath:
+        path = PurePosixPath(raw)
+        if (
+            not raw.strip()
+            or path.is_absolute()
+            or ".." in path.parts
+            or path.as_posix() != raw
+            or raw == "."
+        ):
+            raise CheckError(f"unsafe repository input path: {raw}")
+        return path
+
+    def _input_revision(self, raw: str, revisions):
+        path = self._safe_input(raw)
+        if path.parts[0] in {BACKEND_REPOSITORY, FRONTEND_REPOSITORY}:
+            name = path.parts[0]
+            relative = PurePosixPath(*path.parts[1:]).as_posix()
+        else:
+            name, relative = ROOT_REPOSITORY, raw
+        return self.repositories[name], revisions[name], relative
+
+    def _coverage_changes(self, group, observed, state):
+        if not group["paths"]:
+            return "historical inputs unknown; not current proof"
+        for qualified in group["requirements"]:
+            repo, requirement = qualified.split(":", 1)
+            previous = self._manifest_at_revision(
+                self.repositories[repo], observed[repo]
+            )
+            current = self._manifest_at_revision(
+                self.repositories[repo], state.revisions[repo]
+            )
+            before = {
+                r["id"]: (r["spec_id"], r["text_sha256"])
+                for r in previous["requirements"]
+            }
+            after = {
+                r["id"]: (r["spec_id"], r["text_sha256"])
+                for r in current["requirements"]
+            }
+            if (
+                requirement not in after
+                or before.get(requirement) != after[requirement]
+            ):
+                return f"stale requirement {qualified}; historical result retained"
+        for raw in group["paths"]:
+            repository, commit, relative = self._input_revision(raw, observed)
+            environment = dict(self.environment, GIT_LITERAL_PATHSPECS="1")
+            for args in (
+                ("diff", "--name-only", "-z", commit, "--", relative),
+                ("diff", "--cached", "--name-only", "-z", commit, "--", relative),
+                ("ls-files", "--others", "--exclude-standard", "-z", "--", relative),
+            ):
+                if _run(
+                    ["git", *args], cwd=repository.path, env=environment, text=False
+                ).stdout:
+                    return f"stale input {raw}; historical result retained"
+        return ""
 
     def _commit_exists_and_is_reachable(
         self, repository: Repository, sha: str, pinned_revision: str
@@ -1196,133 +707,284 @@ class WorkspaceChecker:
                 f"could not compare revisions in {repository.name}: {sha} and {pinned_revision}"
             )
 
+    def _manifest_at_revision(self, repository: Repository, revision: str) -> dict:
+        key = (repository.name, revision)
+        if key in self._manifest_cache:
+            return self._manifest_cache[key]
+        if repository.name == ROOT_REPOSITORY:
+            raise CheckError("root evidence is not a child knowledge manifest")
+        before = (
+            _git_output(repository.path, "rev-parse", "HEAD"),
+            _git_status(repository.path),
+        )
+        if before[1]:
+            raise CheckError(
+                f"knowledge-export requires a clean repository: {repository.name}"
+            )
+        result = _run(
+            [
+                "make",
+                "--no-print-directory",
+                "-s",
+                "knowledge-export",
+                f"REF={revision}",
+            ],
+            cwd=repository.path,
+            env=self._child_environment(repository.name),
+            check=False,
+        )
+        after = (
+            _git_output(repository.path, "rev-parse", "HEAD"),
+            _git_status(repository.path),
+        )
+        if before != after:
+            raise CheckError(f"knowledge-export modified {repository.name}")
+        if result.returncode:
+            raise CheckError(
+                f"knowledge-export failed for {repository.name}@{revision}: {result.stderr.strip()}"
+            )
+        try:
+            manifest = json.loads(result.stdout, object_pairs_hook=unique_json_object)
+        except (ValueError, TypeError) as exc:
+            raise CheckError(
+                f"invalid knowledge-export JSON from {repository.name}"
+            ) from exc
+        if (
+            not isinstance(manifest, dict)
+            or type(manifest.get("schema_version")) is not int
+            or manifest["schema_version"] != 1
+            or manifest.get("repository") != repository.name
+            or manifest.get("revision") != revision
+        ):
+            raise CheckError(
+                f"knowledge-export schema/repository/revision mismatch: {repository.name}"
+            )
+        documents = manifest.get("documents")
+        requirements = manifest.get("requirements")
+        references = manifest.get("external_upstream")
+        if not all(
+            isinstance(value, list) for value in (documents, requirements, references)
+        ):
+            raise CheckError(
+                f"knowledge-export requires document, requirement and reference arrays: {repository.name}"
+            )
+        by_id = {}
+        layers = {
+            "INT": "intent",
+            "SPEC": "spec",
+            "DES": "design",
+            "IMP": "implementation",
+            "EVD": "evidence",
+        }
+        statuses = {
+            "intent": {"draft", "approved", "retired"},
+            "spec": {"draft", "approved", "retired"},
+            "design": {"draft", "active", "blocked", "superseded"},
+            "implementation": {"active", "retired", "aligned", "unknown", "diverged"},
+            "evidence": {"active", "superseded"},
+        }
+        for doc in documents:
+            if not isinstance(doc, dict):
+                raise CheckError("invalid exported document")
+            identity = doc.get("id", "")
+            if (
+                not isinstance(identity, str)
+                or not FORMAL_ID_RE.fullmatch(identity)
+                or identity in by_id
+            ):
+                raise CheckError(f"duplicate or invalid exported document: {identity}")
+            layer = layers.get(identity.split("-", 1)[0])
+            if (
+                doc.get("layer") != layer
+                or doc.get("path") != f"docs/knowledge/{layer}/{identity}.md"
+                or not isinstance(doc.get("status"), str)
+                or doc["status"] not in statuses[layer]
+            ):
+                raise CheckError(f"noncanonical exported document: {identity}")
+            by_id[identity] = doc
+        seen = set()
+        for requirement in requirements:
+            if not isinstance(requirement, dict):
+                raise CheckError("invalid exported requirement")
+            identity = requirement.get("id", "")
+            spec_id = requirement.get("spec_id")
+            owner = by_id.get(spec_id) if isinstance(spec_id, str) else None
+            if (
+                not isinstance(identity, str)
+                or not REQUIREMENT_ID_RES[repository.name].fullmatch(identity)
+                or identity in seen
+            ):
+                raise CheckError(
+                    f"duplicate or invalid exported requirement: {identity}"
+                )
+            if (
+                not owner
+                or owner["layer"] != "spec"
+                or owner["status"] != "approved"
+                or requirement.get("path") != owner["path"]
+                or not isinstance(requirement.get("text_sha256"), str)
+                or not re.fullmatch(r"[0-9a-f]{64}", requirement["text_sha256"])
+            ):
+                raise CheckError(
+                    f"requirement has no unique approved SPEC definition: {identity}"
+                )
+            definition = requirement.get("definition")
+            if (
+                not isinstance(definition, str)
+                or not definition.strip()
+                or hashlib.sha256(definition.encode()).hexdigest()
+                != requirement["text_sha256"]
+            ):
+                raise CheckError(
+                    f"exported requirement fingerprint mismatch: {identity}"
+                )
+            seen.add(identity)
+        for reference in references:
+            if (
+                not isinstance(reference, dict)
+                or not isinstance(reference.get("source_id"), str)
+                or reference["source_id"] not in by_id
+            ):
+                raise CheckError("exported external reference has no formal source")
+            raw = f"{reference.get('repository')}@{reference.get('revision')}:{reference.get('target_id')}"
+            parse_external_reference(raw, source=repository.name)
+        self._manifest_cache[key] = manifest
+        return manifest
+
     def _target_ids_at_revision(
         self, repository: Repository, revision: str
     ) -> dict[str, list[str]]:
-        cache_key = (repository.name, revision)
-        cached = self._target_id_cache.get(cache_key)
-        if cached is not None:
-            return cached
-        tree = _run(
-            [
-                "git",
-                "ls-tree",
-                "-r",
-                "--name-only",
-                "-z",
-                revision,
-                "--",
-                repository.knowledge_path.as_posix(),
-            ],
-            cwd=repository.path,
-            text=False,
-        )
-        paths = [
-            os.fsdecode(raw_path) for raw_path in tree.stdout.split(b"\0") if raw_path
-        ]
-        target_ids: dict[str, list[str]] = {}
-        for raw_path in paths:
-            path = PurePosixPath(raw_path)
-            if path.suffix != ".md":
-                continue
-            blob = _run(
-                ["git", "show", f"{revision}:{raw_path}"],
-                cwd=repository.path,
-            ).stdout
-            document_id = parse_document_id(
-                blob, source=f"{repository.name}@{revision}:{raw_path}"
-            )
-            if document_id and _is_formal_document(path, document_id, repository.name):
-                target_ids.setdefault(document_id, []).append(raw_path)
+        key = (repository.name, revision)
+        if key in self._target_id_cache:
+            return self._target_id_cache[key]
+        if repository.name != ROOT_REPOSITORY:
+            manifest = self._manifest_at_revision(repository, revision)
+            targets = {
+                record["id"]: [record["path"]]
+                for record in manifest["documents"] + manifest["requirements"]
+            }
+        else:
+            targets = {}
+            paths = _run(
+                [
+                    "git",
+                    "ls-tree",
+                    "-r",
+                    "--name-only",
+                    "-z",
+                    revision,
+                    "--",
+                    ROOT_EVIDENCE_PATH.as_posix(),
+                ],
+                cwd=self.root,
+                text=False,
+            ).stdout.split(b"\0")
+            for raw in paths:
+                if not raw:
+                    continue
+                path = PurePosixPath(os.fsdecode(raw))
                 if (
-                    document_id.startswith("SPEC-")
-                    and parse_frontmatter_scalar(
-                        blob,
-                        "status",
-                        source=f"{repository.name}@{revision}:{raw_path}",
-                    )
-                    == "approved"
+                    path.parent != ROOT_EVIDENCE_PATH
+                    or path.name == "README.md"
+                    or path.suffix != ".md"
                 ):
-                    for requirement in requirement_definitions(
-                        blob, repository=repository.name
-                    ):
-                        target_ids.setdefault(requirement, []).append(raw_path)
-        self._target_id_cache[cache_key] = target_ids
-        return target_ids
+                    continue
+                text = _run(["git", "show", f"{revision}:{path}"], cwd=self.root).stdout
+                identity = parse_document_id(text, source=str(path))
+                if (
+                    identity
+                    and identity.startswith("EVD-")
+                    and FORMAL_ID_RE.fullmatch(identity)
+                    and path.stem == identity
+                ):
+                    targets.setdefault(identity, []).append(path.as_posix())
+        self._target_id_cache[key] = targets
+        return targets
 
     def _reference_limits(
-        self,
-        source_repository: Repository,
-        path: str,
-        text: str,
-        state: WorkspaceState,
+        self, source_repository: Repository, path: str, text: str, state: WorkspaceState
     ) -> Mapping[str, str]:
         if (
             source_repository.name != ROOT_REPOSITORY
-            or PurePosixPath(path) == ROOT_EVIDENCE_PATH / "README.md"
+            or PurePosixPath(path).name == "README.md"
         ):
             return state.revisions
-        source = f"{source_repository.name}:{path}"
+        observed = self._required_sha(text, "observed_commit", source=path)
         return {
-            ROOT_REPOSITORY: self._required_sha(text, "observed_commit", source=source),
-            BACKEND_REPOSITORY: self._required_sha(
-                text, "backend_commit", source=source
-            ),
-            FRONTEND_REPOSITORY: self._required_sha(
-                text, "frontend_commit", source=source
+            ROOT_REPOSITORY: observed,
+            BACKEND_REPOSITORY: self._gitlink_at_revision(observed, BACKEND_REPOSITORY),
+            FRONTEND_REPOSITORY: self._gitlink_at_revision(
+                observed, FRONTEND_REPOSITORY
             ),
         }
 
     def validate_external_upstream(self, state: WorkspaceState) -> int:
         self._validate_root_evidence_location()
         self._validate_root_evidence_schema(state)
-        count = 0
-        for source_repository in state.repositories.values():
-            for path, text in self._working_documents(source_repository):
-                source = f"{source_repository.name}:{path}"
-                reference_limits = self._reference_limits(
-                    source_repository, path, text, state
+        pending = []
+        for name in (BACKEND_REPOSITORY, FRONTEND_REPOSITORY):
+            manifest = self._manifest_at_revision(
+                state.repositories[name], state.revisions[name]
+            )
+            for ref in manifest["external_upstream"]:
+                pending.append(
+                    (
+                        f"{name}:{ref['source_id']}",
+                        ExternalReference(
+                            ref["repository"], ref["revision"], ref["target_id"]
+                        ),
+                        state.revisions,
+                    )
                 )
-                for reference in parse_external_references(text, source=source):
-                    target = state.repositories[reference.repository]
-                    pinned_revision = reference_limits[reference.repository]
-                    self._commit_exists_and_is_reachable(
-                        target, reference.sha, pinned_revision
-                    )
-                    matches = self._target_ids_at_revision(target, reference.sha).get(
-                        reference.target_id, []
-                    )
-                    if len(matches) != 1:
-                        qualifier = "no" if not matches else str(len(matches))
-                        raise CheckError(
-                            f"{source}: external_upstream target must resolve to exactly one "
-                            "formal document or approved-SPEC requirement; "
-                            f"found {qualifier} matches for {reference.repository}@"
-                            f"{reference.sha}:{reference.target_id}"
-                        )
-                    count += 1
-        return count
+        for path, text in self._working_documents(state.repositories[ROOT_REPOSITORY]):
+            limits = self._reference_limits(
+                state.repositories[ROOT_REPOSITORY], path, text, state
+            )
+            pending.extend(
+                (path, ref, limits)
+                for ref in parse_external_references(text, source=path)
+            )
+        for source, reference, limits in pending:
+            target = state.repositories[reference.repository]
+            self._commit_exists_and_is_reachable(
+                target, reference.sha, limits[reference.repository]
+            )
+            matches = self._target_ids_at_revision(target, reference.sha).get(
+                reference.target_id, []
+            )
+            if len(matches) != 1:
+                raise CheckError(
+                    f"{source}: external_upstream target must resolve to exactly one formal document or approved-SPEC requirement; found {len(matches)} matches for {reference.repository}@{reference.sha}:{reference.target_id}"
+                )
+        return len(pending)
 
-    def _child_environment(self) -> dict[str, str]:
+    def _child_environment(self, repository: str | None = None) -> dict[str, str]:
         environment = dict(self.environment)
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        environment.pop("KNOWLEDGE_PYTHON", None)
+        key = (
+            "BACKEND_KNOWLEDGE_PYTHON"
+            if repository == BACKEND_REPOSITORY
+            else "FRONTEND_KNOWLEDGE_PYTHON"
+        )
+        if repository and environment.get(key):
+            environment["KNOWLEDGE_PYTHON"] = environment[key]
         return environment
 
     def knowledge_check(self) -> None:
         state = self.inspect_workspace()
         reference_count = self.validate_external_upstream(state)
-        environment = self._child_environment()
         run_read_only_command(
             self.repositories[BACKEND_REPOSITORY].path,
             ["make", "engineering-lint"],
             label="backend knowledge gate",
-            env=environment,
+            env=self._child_environment(BACKEND_REPOSITORY),
         )
         run_read_only_command(
             self.repositories[FRONTEND_REPOSITORY].path,
             ["make", "knowledge-check"],
             label="frontend knowledge gate",
-            env=environment,
+            env=self._child_environment(FRONTEND_REPOSITORY),
         )
         print(
             "knowledge-check passed: gitlinks aligned; child gates passed; "

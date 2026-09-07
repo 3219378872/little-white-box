@@ -4,8 +4,6 @@ status: active
 result: partial
 updated_at: 2026-09-06
 observed_commit: 33364ba5cee1434b1f1dfd7254ff847d096f65c9
-backend_commit: 58735970348ee2258a45058e8f85c21eb0fb4963
-frontend_commit: 8646808230f70bd6d5a073e8ced1307b5907ca57
 commands:
   - just knowledge-check
   - BACKEND_GENERATE_PYTHON=/tmp/esx-embedding-proto-venv/bin/python3 just contract-check
@@ -16,9 +14,15 @@ commands:
   - just e2e-agent-research
   - just e2e
   - just e2e deploy/dev/e2e/test_assistant.py::test_watch_matcher_delivers_assistant_message
-covers:
-  - FQ-002
-  - FQ-008
+coverage:
+  - requirements:
+      - little-white-box-front:FQ-002
+      - little-white-box-front:FQ-008
+    paths:
+      - justfile
+      - deploy/dev
+      - little-white-box-content-community
+      - little-white-box-front
 scope:
   - static
   - integration
@@ -26,8 +30,6 @@ scope:
   - synthetic
 external_upstream:
   - little-white-box-content-community@58735970348ee2258a45058e8f85c21eb0fb4963:IMP-community-core
-  - little-white-box-front@8646808230f70bd6d5a073e8ced1307b5907ca57:FQ-002
-  - little-white-box-front@8646808230f70bd6d5a073e8ced1307b5907ca57:FQ-008
 ---
 
 # 跨仓知识链与联调证据
@@ -35,6 +37,9 @@ external_upstream:
 本页记录根编排提交 `33364ba5cee1434b1f1dfd7254ff847d096f65c9` 及其两个子仓 gitlink
 共同完成后的验证结果。重构建立 `intent -> spec -> design -> implementation <-> evidence`
 治理链和跨仓门禁；本轮没有修改业务 API、proto、SQL 或运行时语义。
+
+2026-09-07 元数据迁移：子仓版本由观察提交的 gitlink 推导，coverage 保守保留整套编排及两端输入。
+下列命令、结果和开放门禁仍属于原观察提交；迁移不构成重跑，也不把历史 partial 提升为当前通过证明。
 
 ## 已通过门禁
 

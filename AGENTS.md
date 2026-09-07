@@ -50,77 +50,18 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 - 正式跨仓引用使用 front matter 列表 `external_upstream`，每项固定为
   `repo@<40位提交SHA>:<正式文档ID或已批准SPEC条款ID>`；repo 只能是根仓或上述两个子仓的仓库名。
   条款 ID 按目标仓分派：前端只接受 `FX-000` / `FQ-000` 形态，后端接受其大写域前缀、三位编号或
-  `A00` 验收编号形态。正式定义只从正文可见的 `-`/`*` 反引号列表项，或首列表头为 `ID`、
-  `requirement`、`条款` 且 separator 合法的至少两列表格读取；列表项冒号后必须有非空定义，表格
-  ID 后至少一列必须有非空定义，表头和条款 cell 的可选反引号必须成对。
-- 跨仓检查器先隔离顶层及列表容器内的 fenced code，再处理 inline code 与 HTML comment。inline
-  backtick span 只由长度完全相同的 maximal run 闭合；跨行匹配不得越过空行、ATX/Setext 标题、
-  fence 起始、任一新列表项或所在列表项的其他 deindent block。同一列表项达到 content indent
-  的续行可以闭合。info string 含 backtick 的非法 backtick fence-shaped 行只允许同行匹配；fence 或
-  code span 内的 comment marker 只按字面量处理。front matter、HTML comment、fenced code、普通
-  正文引用和孤立表格行都不建立条款。
+  `A00` 验收编号形态。条款定义与 Markdown 解析由所属子仓负责，根仓不重复解析子仓文档。
+- 子仓公开 `make knowledge-export REF=<sha>`：使用当前工具读取固定提交 Git blob，输出
+  `schema_version: 1` JSON（仓库、完整 revision、正式文档、approved SPEC 条款及定义指纹、跨仓引用）。
+  根仓验证协议、唯一目标、gitlink 和提交可达性；导出不得执行历史脚本或改变子仓 Git 状态。
+- 根 EVD 只存 `observed_commit`；两端版本从该提交 gitlink 推导。`coverage` 按
+  `requirements: [repo:ID]` 与 `paths: [根仓相对输入路径]` 分组，规则见
+  [证据说明](deploy/dev/e2e/evidence/README.md)。输入变化只使相关组过期，不改写历史结果。
 
-## 联调稳定事实
+## 联调入口
 
-### 入口与端口
-
-| 地址 | 用途 |
-| --- | --- |
-| `http://127.0.0.1:3002` | 对外同源入口：页面 + `/api` + `/xbh-media` |
-| `127.0.0.1:3003` | Flutter 开发服，仅本机，不直接对外 |
-| `127.0.0.1:8888` | Gateway |
-| 宿主机 `:33000` | Grafana（容器内 3000） |
-| 宿主机 `:18080` | SeaweedFS 卷 HTTP（容器内 8080） |
-| `:9333` / `:8333` | SeaweedFS master / S3 |
-
-### 命令
-
-- `just up` / `just down`（alias `start` / `stop`）：`up` 先停止现有应用，再执行
-  `middleware-up` 的 schema patch，最后启动同一源码版本的应用；禁止带旧进程重放迁移。
-  `down` 会停应用、反代、algorithm profile（embedding-service / online-infer）和默认中间件
-  容器，保留数据卷。`up` 不启也不停 infer。
-- `just restart`：只反弹应用与默认中间件，已在跑的 infer 保持不动；`just status`：容器、
-  进程 pid 存活与关键端口探测（含 `:50051` / `:9025`）
-- `just rotate-db-credentials`：只轮换本地 app/E2E MySQL 凭据并原子改写 env，不输出新值；
-  下一次 `middleware-up` 创建独立账号并撤销旧默认账号
-- `just seed` = `seed-dev-user` + `seed-eval-corpus`，均可单独执行
-- `just knowledge-check`：先运行根检查器单测，再核对两个 gitlink 与子仓 HEAD、校验固定提交上的
-  跨仓引用，并调用后端 `make engineering-lint` 与前端 `make knowledge-check`
-- `just contract-check`：在一次性本地 clone 中运行后端 `make generate` 并要求零差异，再调用前端
-  `make sdk-check` 并逐字节核对两份 Gateway SDK；缺少 `grpc_tools.protoc` 时可用
-  `BACKEND_GENERATE_PYTHON` 指定 Python 可执行文件，或用 `GENERATE_PYTHON_BIN_DIR` 指定其 bin 目录
-- 分步控制：`middleware-up/down` 只管 Docker 中间件（保留数据卷）；`app-up/down` 只管
-  本机进程与反代；`infer-up/down` 管可选算法服务（compose profile `algorithm`：
-  embedding-service + online-infer，首次启动需下载模型权重，未启动时推荐走规则降级）
-
-### 运行时产物与数据
-
-- 进程二进制、pid 与日志在 `/tmp/xbh-run/{bin,pids,logs}`；pidfile 指向直接执行的服务二进制，
-  服务配置覆盖副本在 `/tmp/xbh-etc`
-  （复制仓库 yaml，把 RPC `ListenOn`、网关 `RestConf` 与各服务 `DevServer` 的
-  `Host: 0.0.0.0` 改写为回环地址，不改子仓原文件）。
-- `/tmp/xbh-run`、日志/pid 目录和 `/tmp/xbh-etc` 为 `0700`，日志为 `0600`；常驻维护器在单个
-  stdout 日志超过 5 MiB 时 copy-truncate，并只保留一份 `*.log.1.gz`。
-- `app-up` 会在启动前清空历史 `assistant-rpc`、`assistant-watch`、`assistant-agent` 运行日志；这些
-  日志可能含用户输入、工具参数或内容摘要，不跨版本保留。
-- 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
-  可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
-  （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
-- e2e 会在 session 结束时软删除本轮经测试客户端创建且仍存在的帖子；平台没有测试用户删除接口，
-  因此本轮注册的 `e2e<RUN_ID>*` 用户仍保留，必要时按明确 RUN_ID 单独治理。
-- `middleware-up` 每次对后端仓 `deploy/sql/patches/*.sql` 做幂等重放（补丁必须自幂等，
-  约定见该目录 README）；基线 schema 仅空卷初始化时经 initdb.d 生效。
-- `xbh_assistant` 由上述 patches 创建；`app-up` 在 `DB_ASSISTANT` 为空时从
-  `DB_CONTENT` 替换 schema 名得到 DSN。app 使用独立 `APP_MYSQL_*` 账号且只具备七个业务 schema
-  的 SELECT/INSERT/UPDATE/DELETE；E2E 使用不同的 `E2E_MYSQL_*` 账号且只有 SELECT，旧 `xbh`
-  默认账号在授权收敛后删除。
-- 重启机器后 `/tmp` 产物与反代容器消失，重新 `just up` 即可。
-- CanvasKit 由静态伺服层从 `<front>/web/canvaskit/`（编排层符号链接到 SDK 缓存，随升级
-  自动跟随）同源提供，构建期经 `--dart-define` 注入；SDK 缺失时回退 gstatic 并打警告。
-- `:3003/:3002` 对外提供的是 **release 构建静态包**（lib/ 变化后 `app-up` 自动重建，
-  `FORCE_FRONT_BUILD=1 just app-up` 强制重建）。DDC 调试模式（`make dev-real`）在当前
-  SDK 下访客引导会被 DWDS RunRequest 门控卡死且附着即崩溃，仅限本机排障手动使用。
-- 易变踩坑细节一律看 [NOTES.md](NOTES.md)，本文件只维护上述稳定事实。
+稳定端口、命令、运行产物、测试数据及权限边界见 [本地联调](deploy/dev/README.md)。
+现场备忘仍以 [NOTES.md](NOTES.md) 为入口。本文不复制操作细节；修改编排时同步该说明。
 
 ## 根仓库修改与提交流程
 

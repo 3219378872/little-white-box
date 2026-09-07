@@ -46,6 +46,15 @@ status:
     source "$ROOT/deploy/dev/stack.sh"
     stack_status
 
+# 安装三个仓库隔离且固定版本的知识工具依赖
+knowledge-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    knowledge_setup
+
 # 校验 gitlink、跨仓固定引用及前后端知识门禁
 knowledge-check:
     #!/usr/bin/env bash

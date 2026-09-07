@@ -1,28 +1,31 @@
 # 跨仓联调证据
 
-本目录只保存必须由根编排提交、后端 gitlink 与前端 gitlink 共同解释的黑盒联调证据。单仓可以独立
-复现和解释的设计、实现与验证仍归对应子仓 `docs/knowledge/`，这里不复制产品意图、规格或实现语义。
+这里只保存必须由根编排提交和两个子仓 gitlink 共同解释的证据。单仓的设计、实现与验证仍归对应子仓，
+这里不复制产品语义。页面直接存为 `EVD-*.md`，文件名与 id 一致。
 
-每份证据直接存为本目录下的独立 Markdown 文件，并记录：
+## 最小记录
 
-- 与文件名一致的 `id: EVD-*`、`status: active|superseded`、
-  `result: passed|partial|failed|blocked` 和 `updated_at: YYYY-MM-DD`；
-- 执行时的根提交 `observed_commit` 和该提交内两个 gitlink 对应的 `backend_commit`、
-  `frontend_commit`，三者都使用 40 位 SHA；
-- 非空 `covers` 条款列表、`commands` 命令列表、实际结果、未覆盖边界及可选 `artifacts` 列表；
-  受控列表项不得为空或重复；
-- 非空 `scope` 列表，取值只能是 `static`、`unit`、`integration`、`e2e`、`browser`、
-  `device`、`synthetic`、`human-review`、`live-provider` 或 `production`；
-- front matter `external_upstream` 列表，格式为
-  `repo@<40位提交SHA>:<正式文档ID或已批准SPEC条款ID>`，并至少各引用一个前端与后端目标。
-  每个 `covers` 条款必须同时作为一项精确的 `external_upstream` 条款目标出现；
+- `id`、`status: active|superseded`、`result: passed|partial|failed|blocked`、`updated_at: YYYY-MM-DD`。
+- `observed_commit` 为实际运行时的根仓完整 SHA，且可从当前 HEAD 到达；子仓版本从该提交的 gitlink
+  推导，不再手填 backend_commit/frontend_commit。
+- `commands`、`scope` 是非空、无重复的文本列表。scope 仅限
+  `static/unit/integration/e2e/browser/device/synthetic/human-review/live-provider/production`。
+- `coverage` 是非空覆盖组列表，每组只有 `requirements` 和 `paths`；同一条款只出现一次。
+  requirements 使用 `little-white-box-front:FQ-002` 等仓库限定 ID，从观察提交的 gitlink 导出批准条款。
+  paths 是观察时存在的根仓相对路径；子仓前缀后跟子仓路径，也可用整个子仓目录表示全部输入。
+- 可选 `external_upstream` 只保留覆盖关系之外的语义依赖，仍固定为 `repo@<40sha>:<ID>`，不重复列出
+  coverage 条款。覆盖关系与外部引用合起来必须涉及两个子仓；外部引用不得晚于观察提交对应的版本。
+- 正文记录实际结果和未覆盖边界，可选 `artifacts` 使用仓库文件或稳定 URI；passed 产物不能全在 `/tmp`。
 
-子仓正式目标必须是 `docs/knowledge/<layer>/<ID>.md` 的直接页面，layer 为 `intent`、`spec`、
-`design`、`implementation` 或 `evidence`；层级 README、嵌套页、模板、提案、归档和后端旧
-`implementation/evidence/` 均不能作为正式目标。
+## 有效性
 
-证据只陈述实际执行结果。未运行的外部 provider、浏览器、设备、容量或生产门禁必须明确标为未验证，
-不能由本地命令通过推导为完成。`active` 证据的两个子仓提交必须仍等于根仓当前 gitlink；从
-`observed_commit` 到当前 HEAD 只允许本目录新增或修订证据，且工作树在本目录外必须干净。任一根编排
-资产或 gitlink 前进后，把旧证据标为 `superseded` 并增加新证据。`active + passed` 若记录产物，不能
-全部位于易失的 `/tmp`。
+`active` 表示记录仍可引用，不表示所有组仍能证明当前版本。根仓逐组比较输入内容和条款定义指纹，报告
+哪些组已过期；其他领域、无关文档或单纯 gitlink 前进不会自动使整页失效。历史结果不被改写或删除。
+旧 partial 若没有可恢复输入，使用空 paths 明确表示未知，不能用于当前通过证明；passed 组必须有路径。
+
+输入路径必须覆盖命令依赖的源码、测试、契约、配置和共享工具，不能为了避免失效而缩小快照。
+根仓只解释跨仓证据，不拥有子仓 IMP；子仓的 aligned 仍由各自知识门禁根据本仓证据独立判定。
+根检查器只消费子仓固定版本 JSON 导出，不解析子仓 Markdown，也不执行历史脚本。
+
+先提交被验证变更，再在最终提交运行命令，最后用独立证据提交记录结果。结构检查、契约生成一致或
+本地测试通过，不替代 provider、浏览器、设备、容量与生产验证。未执行范围保持未验证。
