@@ -18,8 +18,7 @@ from unittest import mock
 
 
 sys.dont_write_bytecode = True
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import workspace_checks  # noqa: E402
+from deploy.dev import workspace_checks
 
 
 BACKEND = workspace_checks.BACKEND_REPOSITORY
@@ -782,7 +781,7 @@ class ChildGateTest(unittest.TestCase):
 
 class StackRoutingTest(unittest.TestCase):
     def test_stack_functions_route_through_root_checker(self):
-        root = Path(__file__).resolve().parents[2]
+        root = Path(__file__).resolve().parents[3]
         stack = root / "deploy/dev/stack.sh"
         script = f"""
 ROOT={shlex.quote(str(root))}
@@ -809,7 +808,7 @@ contract_check
         self.assertEqual(
             result.stdout.splitlines(),
             [
-                "python3|-m|unittest|-v|deploy.dev.test_workspace_checks",
+                "python3|-m|unittest|-v|deploy.dev.tests.test_workspace_checks",
                 f"python3|{root}/deploy/dev/workspace_checks.py|knowledge|"
                 f"--root|{root}|--backend|/fixture/backend|"
                 "--frontend|/fixture/frontend",

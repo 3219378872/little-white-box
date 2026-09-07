@@ -132,6 +132,7 @@ just status
 | `just app-up` / `just app-down` | 只控制本机应用与反代，分步使用前先确认配置和中间件状态 |
 | `just infer-up` / `just infer-down` | 控制可选算法服务 |
 | `just knowledge-setup` | 为三仓安装隔离的知识工具依赖，首次知识/契约检查前执行 |
+| `just test-dev` | 统一发现 `deploy/dev/tests/` 编排单测，不连接真实栈 |
 | `just knowledge-check` | 只读核对 gitlink、跨仓知识引用与两端知识门禁 |
 | `just contract-check` | 在临时 clone 中检查后端生成漂移，并核对前端两份 SDK；需备齐生成工具 |
 | `just e2e deploy/dev/e2e/test_health.py` | 对已运行的真实栈执行所选健康测试；`just e2e` 才运行全套 |

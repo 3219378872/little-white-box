@@ -3,7 +3,7 @@
 
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-# 路径、端口、容器名的默认值集中在 stack.sh 文件头，可用环境变量覆盖；
+# 路径、端口、容器名的默认值集中在 deploy/dev/lib/config.sh，可用环境变量覆盖；
 # 这里只保留 recipe 插值需要的根目录。
 root := justfile_directory()
 
@@ -55,6 +55,15 @@ knowledge-setup:
     # shellcheck source=/dev/null
     source "$ROOT/deploy/dev/stack.sh"
     knowledge_setup
+
+# 根编排单测（不启动真实联调栈）
+test-dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    test_dev
 
 # 校验 gitlink、跨仓固定引用及前后端知识门禁
 knowledge-check:

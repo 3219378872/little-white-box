@@ -7,7 +7,7 @@ import unittest
 
 
 _SPEC = importlib.util.spec_from_file_location(
-    "log_maintainer", Path(__file__).with_name("log_maintainer.py")
+    "log_maintainer", Path(__file__).resolve().parents[1] / "log_maintainer.py"
 )
 assert _SPEC is not None and _SPEC.loader is not None
 log_maintainer = importlib.util.module_from_spec(_SPEC)

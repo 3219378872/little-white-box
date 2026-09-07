@@ -34,7 +34,8 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 | [README.md](README.md) | 面向读者的项目介绍、三仓职责与上手导航，不替代本文件规则或子仓正式知识 |
 | [.gitmodules](.gitmodules) | 子仓指针：`little-white-box-content-community`、`little-white-box-front`，均跟踪 `main` |
 | [justfile](justfile) | 本地栈唯一命令入口；recipe 是薄壳，source [deploy/dev/stack.sh](deploy/dev/stack.sh) 后调用其中函数 |
-| [deploy/dev/stack.sh](deploy/dev/stack.sh) | 被 source 的函数库，不要直接执行；路径、端口、容器名均可用环境变量覆盖（`BACKEND`、`FRONTEND`、`RUN_DIR`、`ETC_DIR`、`PROXY_NAME` 等），默认值集中在文件头 |
+| [deploy/dev/stack.sh](deploy/dev/stack.sh) | 被 source 的入口垫片，不要直接执行；按固定清单加载 `deploy/dev/lib/*.sh`，路径、端口、容器名均可用环境变量覆盖（`BACKEND`、`FRONTEND`、`RUN_DIR`、`ETC_DIR`、`PROXY_NAME` 等），默认值集中在 `lib/config.sh` |
+| [deploy/dev/tests/](deploy/dev/tests/) | 根编排单测；`just test-dev` 全量发现，真实栈黑盒测试仍在 `e2e/` |
 | [deploy/dev/middleware-override.yml](deploy/dev/middleware-override.yml) | 叠加在后端 compose 之上的本地覆盖：端口重映射（Grafana→33000、SeaweedFS 卷 HTTP→18080）与 RocketMQ cgroup v2 规避参数 |
 | [deploy/dev/proxy.conf](deploy/dev/proxy.conf) | :3002 同源入口 nginx 配置（`/`→前端 :3003，`/api/`→Gateway :8888，`/xbh-media/`→SeaweedFS S3 :8333）；容器 `xbh-dev-proxy` 以 `--network host` 运行 |
 | [deploy/dev/seed_dev_user.sql](deploy/dev/seed_dev_user.sql) | 测试账号种子；eval 语料与生成/灌库脚本已迁至后端仓 `eval/`、`scripts/`（见下「运行时产物与数据」） |
@@ -46,8 +47,9 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 
 - 密钥只存在于 `/tmp/xbh-dev.env` 或 `deploy/dev/.env`（前者优先），两者都不进仓库；
   `deploy/dev/.env` 必须保持被 `.gitignore` 忽略；加载时收紧为 `0600`。
-- 修改 `stack.sh` 时保持函数式结构，兼容 `bash -euo pipefail`；改动后至少跑
-  `bash -n` 与 `just status` 验证。
+- 修改 `stack.sh` 或 `lib/*.sh` 时保持函数式结构，兼容 `bash -euo pipefail`；入口与所有模块均跑
+  `bash -n`，再跑 `just test-dev` 与 `just status` 验证。模块路径从入口 `BASH_SOURCE` 定位，不跟随业务
+  `ROOT` 覆盖，也不使用 glob 自动加载。
 - 正式跨仓引用使用 front matter 列表 `external_upstream`，每项固定为
   `repo@<40位提交SHA>:<正式文档ID或已批准SPEC条款ID>`；repo 只能是根仓或上述两个子仓的仓库名。
   条款 ID 按目标仓分派：前端只接受 `FX-000` / `FQ-000` 形态，后端接受其大写域前缀、三位编号或
@@ -81,7 +83,7 @@ task 工作树流程：
 1. 确认主检出 `main` 工作树干净。
 2. `git worktree add .worktree/task-<name> -b task/<name>`；所有编辑在该工作树内完成。
    注意：工作树内没有子仓 checkout，运行时验证不可在此进行。
-3. 提交前静态检查：`bash -n deploy/dev/stack.sh`；`just --list` 可解析。
+3. 提交前静态检查：入口与 `deploy/dev/lib/*.sh` 分别运行 `bash -n`；`just --list` 可解析。
 4. 回主检出 `git pull --ff-only origin main`；在 task 工作树把任务分支 rebase 到
    最新 `main`，冲突在 task 工作树解决后复跑第 3 步检查。
 5. 主检出将 `main` fast-forward 到任务提交，禁用 merge commit；确认无误后删除

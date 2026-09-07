@@ -18,6 +18,9 @@
 
 ### 命令
 
+- `just test-dev`：使用根仓隔离知识 Python 发现 `deploy/dev/tests/` 的全部编排单测；不连接真实栈，
+  不包含 `e2e/`。凭据、生命周期、进程身份与清理、readiness、前端启动及 fixture 分域验证。
+
 - `just up` / `just down`（alias `start` / `stop`）：`up` 先停止现有应用，再执行
   `middleware-up` 的 schema patch，最后启动同一源码版本的应用；禁止带旧进程重放迁移。
   `down` 会停应用、反代、algorithm profile（embedding-service / online-infer）和默认中间件
@@ -40,6 +43,10 @@
   embedding-service + online-infer，首次启动需下载模型权重，未启动时推荐走规则降级）
 
 ### 运行时产物与数据
+
+- `justfile` 继续 source `deploy/dev/stack.sh` 后调用原函数；该入口按固定清单加载 `lib/` 下的配置、
+  环境、进程身份、进程控制、readiness、中间件、前端、fixture、检查与生命周期模块。默认值与服务
+  数组位于 `lib/config.sh`；模块定位不受调用目录或业务 `ROOT` 覆盖影响。直接 source 模块不是公开入口。
 
 - 进程二进制、pid 与日志在 `/tmp/xbh-run/{bin,pids,logs}`；pidfile 指向直接执行的服务二进制，
   服务配置覆盖副本在 `/tmp/xbh-etc`
@@ -67,4 +74,3 @@
   `FORCE_FRONT_BUILD=1 just app-up` 强制重建）。DDC 调试模式（`make dev-real`）在当前
   SDK 下访客引导会被 DWDS RunRequest 门控卡死且附着即崩溃，仅限本机排障手动使用。
 - 易变踩坑细节一律看 [NOTES.md](../../NOTES.md)，本页只维护上述稳定事实。
-
