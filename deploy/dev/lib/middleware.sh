@@ -40,6 +40,9 @@ redis_command() {
     redis-cli --no-auth-warning -h "$host" -p "$port" "$@"
 }
 
+# Old sync Assistant stored Redis sessions under assistant:v2*. The v3 runtime
+# only uses Redis for run-event notify keys, so wiping the legacy namespace on
+# every app-up is idempotent and does not touch the MySQL marker.
 wipe_legacy_assistant_redis() {
   local script count_script deleted remaining
   script="local c='0' local n=0 repeat local r=redis.call('SCAN',c,'MATCH',ARGV[1],'COUNT',500) c=r[1] local k=r[2] if #k>0 then n=n+redis.call('UNLINK',unpack(k)) end until c=='0' return n"
@@ -60,6 +63,9 @@ wipe_legacy_assistant_redis() {
   echo "legacy assistant redis keys removed: $deleted"
 }
 
+# middleware-override.yml uses the Compose Spec `ports: !override` YAML tag,
+# which needs docker compose >= 2.24; older versions fail to parse or merge
+# ports unexpectedly.
 require_compose_version() {
   local ver min="2.24.0"
   ver="$(docker compose version --short 2>/dev/null || true)"
@@ -321,9 +327,6 @@ maybe_rebuild_search() {
   )
 }
 
-# True while a process group contains at least one runnable or sleeping member.
-# Linux zombies no longer execute or own sockets, but kill -0 still reports
-# them, so inspect /proc state there and use kill -0 as the portable fallback.
 middleware_up_locked() {
   load_env || return $?
   secure_runtime_paths || return $?
@@ -388,9 +391,3 @@ algorithm_down_locked() {
 algorithm_down() {
   with_app_lifecycle_lock exclusive algorithm_down_locked
 }
-
-# Local Flutter web engine assets (CanvasKit/Skwasm). Since Flutter 3.44 the
-# engine reads its base URL from a compile-time dart-define only, so the dev
-# server must serve the assets itself: symlink the SDK cache into the app's
-# web/ dir and pass --dart-define=FLUTTER_WEB_CANVASKIT_URL=/canvaskit/.
-# The link re-points on every app-up, following SDK upgrades automatically.

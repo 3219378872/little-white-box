@@ -1,6 +1,11 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
 
+# Local Flutter web engine assets (CanvasKit/Skwasm). Since Flutter 3.44 the
+# engine reads its base URL from a compile-time dart-define only, so the dev
+# server must serve the assets itself: symlink the SDK cache into the app's
+# web/ dir and pass --dart-define=FLUTTER_WEB_CANVASKIT_URL=/canvaskit/.
+# The link re-points on every app-up, following SDK upgrades automatically.
 ensure_web_canvaskit() {
   local fl sdk src dst
   fl="$(command -v flutter 2>/dev/null || true)"
@@ -164,4 +169,3 @@ front_bundle_fresh() {
     -type f -newer "$stamp" -print -quit 2>/dev/null)" || return $?
   [[ -z "$changed" ]]
 }
-

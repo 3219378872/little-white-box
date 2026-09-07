@@ -19,8 +19,9 @@ clear_sensitive_assistant_logs() {
   done
 }
 
-# assistant.yaml DataSource is "${DB_ASSISTANT}". Older env files only set
-# DB_CONTENT; derive the DSN by swapping the schema name, keep user/query.
+# True while a process group contains at least one runnable or sleeping member.
+# Linux zombies no longer execute or own sockets, but kill -0 still reports
+# them, so inspect /proc state there and use kill -0 as the portable fallback.
 process_group_running() {
   local pgid="$1" proc pid group pgrp _
   if [[ -d /proc ]]; then
@@ -580,4 +581,3 @@ stop_owned_port() {
   fi
   return "$status"
 }
-

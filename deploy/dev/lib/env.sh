@@ -64,6 +64,8 @@ load_env() {
   validate_dev_db_env
 }
 
+# assistant.yaml DataSource is "${DB_ASSISTANT}". Older env files only set
+# DB_CONTENT; derive the DSN by swapping the schema name, keep user/query.
 ensure_assistant_db_env() {
   if [[ -z "${DB_ASSISTANT:-}" && -n "${DB_CONTENT:-}" ]]; then
     export DB_ASSISTANT="${DB_CONTENT/xbh_content/xbh_assistant}"
@@ -209,9 +211,6 @@ rotate_dev_db_credentials() {
   with_app_lifecycle_lock exclusive rotate_dev_db_credentials_locked
 }
 
-# Old sync Assistant stored Redis sessions under assistant:v2*. The v3 runtime
-# only uses Redis for run-event notify keys, so wiping the legacy namespace on
-# every app-up is idempotent and does not touch the MySQL marker.
 prepare_etc() {
   normalize_assistant_agent_metrics_port || return $?
   mkdir -p "$ETC_DIR" || return $?
@@ -244,7 +243,3 @@ prepare_etc() {
     fi
   done
 }
-
-# middleware-override.yml uses the Compose Spec `ports: !override` YAML tag,
-# which needs docker compose >= 2.24; older versions fail to parse or merge
-# ports unexpectedly.
