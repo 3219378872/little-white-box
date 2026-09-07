@@ -31,6 +31,7 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 
 | 文件 | 职责 |
 | --- | --- |
+| [README.md](README.md) | 面向读者的项目介绍、三仓职责与上手导航，不替代本文件规则或子仓正式知识 |
 | [.gitmodules](.gitmodules) | 子仓指针：`little-white-box-content-community`、`little-white-box-front`，均跟踪 `main` |
 | [justfile](justfile) | 本地栈唯一命令入口；recipe 是薄壳，source [deploy/dev/stack.sh](deploy/dev/stack.sh) 后调用其中函数 |
 | [deploy/dev/stack.sh](deploy/dev/stack.sh) | 被 source 的函数库，不要直接执行；路径、端口、容器名均可用环境变量覆盖（`BACKEND`、`FRONTEND`、`RUN_DIR`、`ETC_DIR`、`PROXY_NAME` 等），默认值集中在文件头 |
@@ -65,14 +66,15 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 
 ## 根仓库修改与提交流程
 
-范围：根仓只修改自己跟踪的文件（`justfile`、`deploy/dev/**`、`AGENTS.md`、`NOTES.md`、
+范围：根仓只修改自己跟踪的文件（`README.md`、`justfile`、`deploy/dev/**`、`AGENTS.md`、`NOTES.md`、
 `.gitignore`、`.gitmodules`）以及子仓 gitlink。任何子仓内容的改动都在对应子仓内按其流程完成，
 根仓提交不得夹带子仓文件内容（只允许 160000 指针）。
 
 分类：
 
 - 纯文档（本文件、`NOTES.md`）：确认主检出 main 干净后可直接编辑提交。
-- 其余编排资产（`justfile`、`deploy/dev/**`、`.gitignore`、`.gitmodules`）：必须走 task 工作树流程。
+- `README.md` 与其余编排资产（`justfile`、`deploy/dev/**`、`.gitignore`、`.gitmodules`）：必须走 task
+  工作树流程；README 不适用上述直接编辑 main 的纯文档豁免。
 
 task 工作树流程：
 
