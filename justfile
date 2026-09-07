@@ -7,6 +7,7 @@ set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 # 这里只保留 recipe 插值需要的根目录。
 root := justfile_directory()
 
+# 列出可用命令
 default:
     @just --list
 
@@ -105,8 +106,9 @@ seed-eval-corpus:
 # 测试账号 + eval 语料
 seed: seed-dev-user seed-eval-corpus
 
-# 黑盒 e2e 套件（对真实联调栈；可传 pytest 路径/-k 过滤，如 just e2e -k search）
-e2e *args="":
+# 黑盒 e2e 套件（对真实联调栈；可传 pytest 路径/-k 过滤，如 just e2e -k "not slow"）
+[positional-arguments]
+e2e *args:
     #!/usr/bin/env bash
     set -euo pipefail
     ROOT="{{root}}"
@@ -114,7 +116,6 @@ e2e *args="":
     source "$ROOT/deploy/dev/stack.sh"
     load_env
     export PYTHONDONTWRITEBYTECODE=1
-    set -- {{args}}
     has_selection=0
     for arg in "$@"; do
         case "$arg" in
@@ -139,8 +140,9 @@ e2e-agent-reset:
 e2e-agent-research:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd "{{justfile_directory()}}"
-    source deploy/dev/stack.sh
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
     e2e_agent_research
 
 # 只起/停 Docker 中间件
@@ -152,6 +154,7 @@ middleware-up:
     source "$ROOT/deploy/dev/stack.sh"
     middleware_up
 
+# 只停 Docker 中间件（保留数据卷）
 middleware-down:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -169,6 +172,7 @@ infer-up:
     source "$ROOT/deploy/dev/stack.sh"
     algorithm_up
 
+# 停可选算法服务（embedding + 在线推理；容器只停不删，保留数据卷）
 infer-down:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -186,6 +190,7 @@ app-up:
     source "$ROOT/deploy/dev/stack.sh"
     app_up
 
+# 只停本机应用（RPC/MQ/Gateway/Flutter/反代）
 app-down:
     #!/usr/bin/env bash
     set -euo pipefail
