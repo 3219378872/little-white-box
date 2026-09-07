@@ -6,7 +6,27 @@
 本仓库 `little-white-box` 是前后端的联调编排入口，管理本地开发栈、跨仓检查、黑盒测试及两个子仓的
 固定版本。业务代码分别维护在独立的 Go 后端与 Flutter 前端仓库中。
 
-[仓库与架构](#仓库与架构) · [快速开始](#快速开始) · [常用命令](#常用命令) · [开发与文档](#开发与文档)
+[界面预览](#界面预览) · [仓库与架构](#仓库与架构) · [快速开始](#快速开始) · [常用命令](#常用命令) · [开发与文档](#开发与文档)
+
+## 界面预览
+
+以下复用 2026-09-06 上一轮浏览器截图。Mock 使用演示数据，真实联调图来自本地测试栈；均不是生产
+数据或当前版本的完整验收结论。图片保存在前端仓，并通过固定提交复用，详见
+[截图来源与说明](https://github.com/3219378872/little-white-box-front/blob/93997279f298fa27244098baec7313584509148a/docs/assets/screenshots/README.md)。
+
+### 桌面内容流 · Mock
+
+![桌面亮色内容流，Mock 演示数据，2026-09-06](https://raw.githubusercontent.com/3219378872/little-white-box-front/93997279f298fa27244098baec7313584509148a/docs/assets/screenshots/mock-desktop-feed.png)
+
+### 移动端
+
+依次为：暗色搜索结果（Mock）、Agent 澄清问答（Mock）、帖子详情（真实联调）。窄屏下图片依次换行。
+
+<p>
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/93997279f298fa27244098baec7313584509148a/docs/assets/screenshots/mock-mobile-search-dark.png" alt="暗色搜索结果，Mock 演示数据，2026-09-06" title="暗色搜索结果 · Mock" width="260">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/93997279f298fa27244098baec7313584509148a/docs/assets/screenshots/mock-mobile-clarification.png" alt="Agent 澄清问答，Mock 演示数据，2026-09-06" title="Agent 澄清问答 · Mock" width="260">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/93997279f298fa27244098baec7313584509148a/docs/assets/screenshots/real-mobile-post.png" alt="帖子详情，真实本地联调测试数据，2026-09-06" title="帖子详情 · 真实联调" width="260">
+</p>
 
 ## 项目介绍
 
