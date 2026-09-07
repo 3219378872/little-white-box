@@ -1,0 +1,56 @@
+== containers ==
+NAME                   SERVICE            STATUS
+xbh-clickhouse         clickhouse         Up 3 hours (healthy)
+xbh-elasticsearch      elasticsearch      Up 3 hours (healthy)
+xbh-etcd               etcd               Up 12 minutes (healthy)
+xbh-grafana            grafana            Up 3 hours
+xbh-jaeger             jaeger             Up 3 hours
+xbh-loki               loki               Up 3 hours
+xbh-milvus             milvus             Up 3 hours (unhealthy)
+xbh-milvus-etcd        etcd-milvus        Up 3 hours (healthy)
+xbh-milvus-minio       minio-milvus       Up 3 hours (healthy)
+xbh-minio              minio              Up 3 hours (healthy)
+xbh-mysql              mysql              Up 3 hours (healthy)
+xbh-prometheus         prometheus         Up 3 hours
+xbh-redis              redis              Up 3 hours (healthy)
+xbh-rocketmq-broker    rocketmq-broker    Up 3 hours (healthy)
+xbh-rocketmq-console   rocketmq-console   Up 3 hours
+xbh-rocketmq-namesrv   rocketmq-namesrv   Up 3 hours (healthy)
+xbh-seaweedfs          seaweedfs          Up 3 hours (healthy)
+xbh-dev-proxy running
+
+== algorithm ==
+NAME      SERVICE   STATUS
+
+== app pids ==
+user-rpc           alive pid=396429
+content-rpc        alive pid=396693
+media-rpc          alive pid=396926
+interaction-rpc    alive pid=397299
+behavior-rpc       alive pid=397525
+search-rpc         alive pid=397847
+recommend-rpc      alive pid=398086
+message-rpc        alive pid=398432
+feed-rpc           alive pid=398796
+assistant-rpc      alive pid=399238
+search-mq          alive pid=399660
+feed-mq            alive pid=399948
+media-mq           alive pid=400197
+recommend-mq       alive pid=400459
+behavior-log       alive pid=400697
+content-cleanup    alive pid=400959
+assistant-watch    alive pid=401182
+assistant-agent    alive ready pid=421166
+gateway            alive pid=403373
+frontend           alive pid=405089
+log-maintainer     alive pid=396014
+
+== ports ==
+:3002 nginx  200
+:3002 api    404
+:8888 gw     404
+:3003 front  200
+:3100 loki  200
+:9136 agent 200
+:50051 embed closed
+:9025 infer  closed

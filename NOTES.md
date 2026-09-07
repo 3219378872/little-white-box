@@ -2,6 +2,20 @@
 
 工作区根目录备忘，不是任一子仓正式知识链的一部分。事实以当时代码、配置和现场命令为准。
 
+## 2026-09-07 职责拆分联调
+
+- stack.sh 现为 28 行 source 入口，固定加载 deploy/dev/lib/ 下 10 个模块；默认值位于 config.sh。
+  justfile 仍 source stack.sh，原 124 个函数保留；根编排单测统一由 just test-dev 发现 deploy/dev/tests/。
+- 三仓整合后的静态、知识和契约门禁通过；根单测 131 项，全量 E2E 117 passed、5 skipped，
+  fixture reset/replay 1 passed、研究闭环 4 passed。两次 fixture 后正常 worker 均恢复 ready，
+  provider/model/凭据未变；入口 :3002 页面 200，健康接口 ready，9 项依赖 ok。
+- 本次 Docker 冲突的占用者是 xbh-milvus（不是下文 09-06 的 xbh-milvus-etcd），动态地址占用了
+  业务 etcd 的固定 172.28.3.5。临时断开该容器网络，先启动 xbh-etcd，再按原 xbh-milvus/milvus
+  别名重连，Milvus 获得 172.28.3.11 并 healthy。未删除容器/卷或修改 Compose；未来重启仍需核实
+  实际占用者，不能照抄旧容器名，也不能把运行态恢复当作持久化修复。
+- 跨仓证据见 [职责拆分验收](deploy/dev/e2e/evidence/EVD-20260907-module-refactor.md)。
+  真实长研究质量、设备、容量与生产门禁仍按两端现有 gap 处理。
+
 ## 2026-09-06 Heybox Android 视觉迁移
 
 - 前端 `9b3fba2` 将现有界面统一到用户提供的 Heybox Android 1.3.394 视觉语言，保留小白盒名称

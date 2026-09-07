@@ -1,0 +1,166 @@
+== backend generated-code drift ==
+scripts/generate.sh
+Done.
+Done.
+Done.
+Done.
+Done.
+Done.
+Done.
+Done.
+Done.
+Done.
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/etc/gateway.yaml exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/config/config.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/gateway.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/svc/service_context.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/health_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/health_ready_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/assistant_run_events_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/get_agent_consent_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/set_agent_consent_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/delete_assistant_history_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/list_assistant_memory_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/add_assistant_memory_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/replace_assistant_memory_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/remove_assistant_memory_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/batch_assistant_memory_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/undo_assistant_memory_change_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/list_assistant_messages_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/post_assistant_message_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/submit_assistant_recommend_feedback_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/answer_assistant_questions_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/cancel_assistant_run_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/confirm_assistant_run_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/get_assistant_thread_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/mark_assistant_thread_read_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/list_assistant_watch_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/create_assistant_watch_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/update_assistant_watch_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/assistant/delete_assistant_watch_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/behavior/record_behavior_events_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/comment/get_comment_replies_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/comment/get_comment_list_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/comment/create_comment_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/comment/delete_comment_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/feed/get_follow_feed_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/feed/get_recommend_feed_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/image/upload_image_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/like_favorite/favorite_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/like_favorite/unfavorite_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/like_favorite/like_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/like_favorite/unlike_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/login/login_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/login/refresh_token_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/login/register_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/login/send_verify_code_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/message/send_message_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/message/get_conversations_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/message/get_messages_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/message/mark_conversation_read_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/message/get_unread_summary_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/posts/get_post_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/posts/get_post_list_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/posts/create_post_v2_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/posts/update_post_v2_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/posts/delete_post_v2_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/search/search_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/search/search_tags_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/search/search_users_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/get_user_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/get_user_favorites_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/get_user_posts_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/follow_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/unfollow_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/update_profile_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/get_personalization_preference_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/handler/user/set_personalization_preference_handler.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/health_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/health_ready_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/assistant_run_events_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/get_agent_consent_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/set_agent_consent_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/delete_assistant_history_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/list_assistant_memory_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/add_assistant_memory_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/replace_assistant_memory_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/remove_assistant_memory_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/batch_assistant_memory_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/undo_assistant_memory_change_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/list_assistant_messages_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/post_assistant_message_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/submit_assistant_recommend_feedback_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/answer_assistant_questions_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/cancel_assistant_run_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/confirm_assistant_run_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/get_assistant_thread_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/mark_assistant_thread_read_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/list_assistant_watch_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/create_assistant_watch_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/update_assistant_watch_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/assistant/delete_assistant_watch_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/behavior/record_behavior_events_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/comment/get_comment_replies_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/comment/get_comment_list_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/comment/create_comment_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/comment/delete_comment_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/feed/get_follow_feed_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/feed/get_recommend_feed_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/image/upload_image_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/like_favorite/favorite_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/like_favorite/unfavorite_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/like_favorite/like_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/like_favorite/unlike_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/login/login_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/login/refresh_token_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/login/register_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/login/send_verify_code_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/message/send_message_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/message/get_conversations_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/message/get_messages_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/message/mark_conversation_read_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/message/get_unread_summary_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/posts/get_post_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/posts/get_post_list_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/posts/create_post_v2_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/posts/update_post_v2_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/posts/delete_post_v2_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/search/search_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/search/search_tags_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/search/search_users_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/get_user_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/get_user_favorites_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/get_user_posts_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/follow_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/unfollow_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/update_profile_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/get_personalization_preference_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/logic/user/set_personalization_preference_logic.go exists, ignored generation
+/tmp/xbh-backend-generate-r_ixyltf/backend/app/gateway/internal/middleware/behavioraccepted_middleware.go exists, ignored generation
+Done.
+== frontend generated SDK drift ==
+python3 tools/sync_gateway_sdk.py --check --api "/tmp/xbh-backend-api-whyv1n43/gateway.api"
+you could use '-hostname' flag to specify your server hostname
+you could use '-scheme' flag to specify your server scheme
+Formatted /tmp/xbh-goctl-dart-mp13q2t5/data/gateway.dart
+Formatted 2 files (1 changed) in 0.05 seconds.
+goctl api dart --api /tmp/xbh-backend-api-whyv1n43/gateway.api --dir /tmp/xbh-goctl-dart-mp13q2t5
+generated SDK is current
+checked generated SDK files:
+  api/gateway.dart
+  data/gateway.dart
+patched HTTP helpers:
+  deleteAssistantHistory -> apiDelete
+  deleteAssistantWatch -> apiDelete
+  deleteComment -> apiDelete
+  deletePostV2 -> apiDelete
+  removeAssistantMemory -> apiDelete
+  replaceAssistantMemory -> apiPatch
+  setPersonalizationPreference -> apiPut
+  unfavorite -> apiDelete
+  unfollow -> apiDelete
+  unlike -> apiDelete
+  updateAssistantWatch -> apiPatch
+  updatePostV2 -> apiPut
+  updateProfile -> apiPut
+contract-check passed: gitlinks aligned; backend generation is current; frontend SDK is current and both generated copies are byte-identical

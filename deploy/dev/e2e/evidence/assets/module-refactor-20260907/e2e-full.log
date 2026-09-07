@@ -1,0 +1,23 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/dev/projects/little/deploy/dev/e2e
+configfile: pytest.ini
+plugins: anyio-4.13.0, cov-7.1.0
+collected 122 items
+
+deploy/dev/e2e/test_assistant.py ......s.........                        [ 13%]
+deploy/dev/e2e/test_assistant_research.py ssss                           [ 16%]
+deploy/dev/e2e/test_auth.py ...........                                  [ 25%]
+deploy/dev/e2e/test_behavior.py .........                                [ 32%]
+deploy/dev/e2e/test_comment.py ........                                  [ 39%]
+deploy/dev/e2e/test_feed.py ........                                     [ 45%]
+deploy/dev/e2e/test_health.py .....                                      [ 50%]
+deploy/dev/e2e/test_interaction.py ...........                           [ 59%]
+deploy/dev/e2e/test_journey.py .                                         [ 59%]
+deploy/dev/e2e/test_media.py .......                                     [ 65%]
+deploy/dev/e2e/test_message.py ........                                  [ 72%]
+deploy/dev/e2e/test_post.py .................                            [ 86%]
+deploy/dev/e2e/test_search.py .......                                    [ 91%]
+deploy/dev/e2e/test_user.py ..........                                   [100%]
+
+================== 117 passed, 5 skipped in 171.74s (0:02:51) ==================

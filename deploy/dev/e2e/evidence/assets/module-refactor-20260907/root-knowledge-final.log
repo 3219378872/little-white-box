@@ -1,0 +1,73 @@
+test_knowledge_check_invokes_both_public_child_gates (deploy.dev.tests.test_workspace_checks.ChildGateTest.test_knowledge_check_invokes_both_public_child_gates) ... ok
+test_read_only_wrapper_detects_clean_head_change (deploy.dev.tests.test_workspace_checks.ChildGateTest.test_read_only_wrapper_detects_clean_head_change) ... ok
+test_read_only_wrapper_detects_repository_mutation (deploy.dev.tests.test_workspace_checks.ChildGateTest.test_read_only_wrapper_detects_repository_mutation) ... ok
+test_read_only_wrapper_preserves_missing_command_diagnostic (deploy.dev.tests.test_workspace_checks.ChildGateTest.test_read_only_wrapper_preserves_missing_command_diagnostic) ... ok
+test_read_only_wrapper_rejects_dirty_repository_before_command (deploy.dev.tests.test_workspace_checks.ChildGateTest.test_read_only_wrapper_rejects_dirty_repository_before_command) ... ok
+test_read_only_wrapper_reports_child_gate_failure (deploy.dev.tests.test_workspace_checks.ChildGateTest.test_read_only_wrapper_reports_child_gate_failure) ... ok
+test_backend_generation_reports_drift_and_cleans_temp_clone (deploy.dev.tests.test_workspace_checks.ContractCheckTest.test_backend_generation_reports_drift_and_cleans_temp_clone) ... ok
+test_backend_generation_uses_temp_clone_and_cleans_it (deploy.dev.tests.test_workspace_checks.ContractCheckTest.test_backend_generation_uses_temp_clone_and_cleans_it) ... ok
+test_frontend_sdk_uses_explicit_api_and_compares_both_files (deploy.dev.tests.test_workspace_checks.ContractCheckTest.test_frontend_sdk_uses_explicit_api_and_compares_both_files) ... ok
+test_generation_python_preserves_virtualenv_symlink (deploy.dev.tests.test_workspace_checks.ContractCheckTest.test_generation_python_preserves_virtualenv_symlink) ... ok
+test_generation_python_preserves_virtualenv_symlink_from_path (deploy.dev.tests.test_workspace_checks.ContractCheckTest.test_generation_python_preserves_virtualenv_symlink_from_path) ... ok
+test_missing_generation_dependency_names_backend_requirements_file (deploy.dev.tests.test_workspace_checks.ContractCheckTest.test_missing_generation_dependency_names_backend_requirements_file) ... ok
+test_missing_generation_python_has_actionable_failure (deploy.dev.tests.test_workspace_checks.ContractCheckTest.test_missing_generation_python_has_actionable_failure) ... ok
+test_parses_locked_reference_shape (deploy.dev.tests.test_workspace_checks.ExternalReferenceParserTest.test_parses_locked_reference_shape) ... ok
+test_parses_requirement_target (deploy.dev.tests.test_workspace_checks.ExternalReferenceParserTest.test_parses_requirement_target) ... ok
+test_rejects_scalar_unknown_repo_short_sha_and_nonformal_id (deploy.dev.tests.test_workspace_checks.ExternalReferenceParserTest.test_rejects_scalar_unknown_repo_short_sha_and_nonformal_id) ... ok
+test_requirement_target_uses_the_target_repository_grammar (deploy.dev.tests.test_workspace_checks.ExternalReferenceParserTest.test_requirement_target_uses_the_target_repository_grammar) ... ok
+test_export_failure_is_actionable (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_export_failure_is_actionable) ... ok
+test_historical_export_ignores_newer_manifest (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_historical_export_ignores_newer_manifest) ... ok
+test_rejects_export_mutation_and_dirty_checkout (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_rejects_export_mutation_and_dirty_checkout) ... ok
+test_rejects_invalid_json_duplicate_keys_and_wrong_revision (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_rejects_invalid_json_duplicate_keys_and_wrong_revision) ... ok
+test_rejects_missing_target_and_wrong_repository_grammar (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_rejects_missing_target_and_wrong_repository_grammar) ... ok
+test_rejects_schema_types_documents_requirements_and_references (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_rejects_schema_types_documents_requirements_and_references) ... ok
+test_rejects_unavailable_reference_commit (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_rejects_unavailable_reference_commit) ... ok
+test_rejects_unreachable_reference (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_rejects_unreachable_reference) ... ok
+test_resolves_formal_document_and_approved_requirement (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_resolves_formal_document_and_approved_requirement) ... ok
+test_root_python_does_not_leak_into_child_tools (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_root_python_does_not_leak_into_child_tools) ... ok
+test_root_uses_child_export_without_reading_child_markdown (deploy.dev.tests.test_workspace_checks.ManifestValidationTest.test_root_uses_child_export_without_reading_child_markdown) ... ok
+test_accepts_groups_bound_to_observed_gitlinks (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_accepts_groups_bound_to_observed_gitlinks) ... ok
+test_child_change_invalidates_only_consuming_group (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_child_change_invalidates_only_consuming_group) ... ok
+test_durable_artifacts_must_exist (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_durable_artifacts_must_exist) ... ok
+test_external_reference_cannot_exceed_observed_gitlinks (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_external_reference_cannot_exceed_observed_gitlinks) ... ok
+test_partial_unknown_inputs_are_explicit_not_current_proof (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_partial_unknown_inputs_are_explicit_not_current_proof) ... ok
+test_rejects_derived_fields_invalid_lists_dates_and_paths (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_rejects_derived_fields_invalid_lists_dates_and_paths) ... ok
+test_rejects_duplicate_yaml_keys (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_rejects_duplicate_yaml_keys) ... ok
+test_rejects_root_evidence_outside_owned_directory_and_nested_pages (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_rejects_root_evidence_outside_owned_directory_and_nested_pages) ... ok
+test_rejects_unknown_or_duplicate_requirements_and_nonexistent_inputs (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_rejects_unknown_or_duplicate_requirements_and_nonexistent_inputs) ... ok
+test_requirement_change_invalidates_only_its_group (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_requirement_change_invalidates_only_its_group) ... ok
+test_requires_both_children (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_requires_both_children) ... ok
+test_shared_input_change_invalidates_every_consuming_group (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_shared_input_change_invalidates_every_consuming_group) ... ok
+test_unrelated_document_change_preserves_all_groups (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_unrelated_document_change_preserves_all_groups) ... ok
+test_whole_child_path_is_valid_and_scoped (deploy.dev.tests.test_workspace_checks.RootEvidenceValidationTest.test_whole_child_path_is_valid_and_scoped) ... ok
+test_stack_functions_route_through_root_checker (deploy.dev.tests.test_workspace_checks.StackRoutingTest.test_stack_functions_route_through_root_checker) ... ok
+test_accepts_matching_gitlinks_and_child_heads (deploy.dev.tests.test_workspace_checks.WorkspaceInspectionTest.test_accepts_matching_gitlinks_and_child_heads) ... ok
+test_rejects_child_head_ahead_of_gitlink (deploy.dev.tests.test_workspace_checks.WorkspaceInspectionTest.test_rejects_child_head_ahead_of_gitlink) ... ok
+test_rejects_missing_child_checkout (deploy.dev.tests.test_workspace_checks.WorkspaceInspectionTest.test_rejects_missing_child_checkout) ... ok
+
+----------------------------------------------------------------------
+Ran 46 tests in 5.893s
+
+OK
+........................................
+----------------------------------------------------------------------
+Ran 40 tests in 3.037s
+
+OK
+...........
+----------------------------------------------------------------------
+Ran 11 tests in 0.021s
+
+OK
+root evidence EVD-20260906-cross-repository-knowledge [little-white-box-front:FQ-002, little-white-box-front:FQ-008]: stale input justfile; historical result retained
+root evidence EVD-20260907-knowledge-structure [little-white-box-front:FQ-002]: stale input justfile; historical result retained
+root evidence EVD-20260907-knowledge-structure [little-white-box-front:FQ-008]: stale input justfile; historical result retained
+== backend knowledge gate ==
+.venv-knowledge/bin/python -m unittest discover -s scripts -p 'test_knowledge.py'
+.venv-knowledge/bin/python -m unittest discover -s scripts -p 'test_engineering_lint.py'
+.venv-knowledge/bin/python scripts/engineering-lint.py
+engineering-lint: all checks passed
+== frontend knowledge gate ==
+.venv-knowledge/bin/python tools/knowledge_base.py check
+knowledge-check: OK (62 documents, 54 requirements; {'aligned': 25, 'unknown': 28, 'diverged': 1})
+knowledge-check passed: gitlinks aligned; child gates passed; 10 external_upstream reference(s) validated

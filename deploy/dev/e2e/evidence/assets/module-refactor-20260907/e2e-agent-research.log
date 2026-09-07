@@ -1,0 +1,20 @@
+ready: llm-fixture
+stopping assistant-agent pid=412635
+building assistant-agent
+starting assistant-agent
+ready: assistant-agent
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/dev/projects/little/deploy/dev/e2e
+configfile: pytest.ini
+plugins: anyio-4.13.0, cov-7.1.0
+collected 4 items
+
+deploy/dev/e2e/test_assistant_research.py ....                           [100%]
+
+============================== 4 passed in 8.25s ===============================
+stopping assistant-agent pid=417644
+stopping llm-fixture pid=415734
+building assistant-agent
+starting assistant-agent
+ready: assistant-agent
