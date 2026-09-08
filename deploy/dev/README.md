@@ -61,6 +61,8 @@
   （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
 - e2e 会在 session 结束时软删除本轮经测试客户端创建且仍存在的帖子；平台没有测试用户删除接口，
   因此本轮注册的 `e2e<RUN_ID>*` 用户仍保留，必要时按明确 RUN_ID 单独治理。
+  清理逐帖校验当前 revision；单项请求或解码失败会继续处理其余登记帖子，并在结束时汇总失败。
+  摘要只包含帖子 ID、操作阶段、HTTP 状态或异常类型，不记录正文、令牌或异常 URL。
 - `middleware-up` 每次对后端仓 `deploy/sql/patches/*.sql` 做幂等重放（补丁必须自幂等，
   约定见该目录 README）；基线 schema 仅空卷初始化时经 initdb.d 生效。
 - `xbh_assistant` 由上述 patches 创建；`app-up` 在 `DB_ASSISTANT` 为空时从

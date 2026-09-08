@@ -11,16 +11,28 @@ _created_posts = {}
 def cleanup_created_posts():
     failures = []
     for post_id, client in reversed(list(_created_posts.values())):
-        detail = client.post_detail(post_id)
-        if detail.status_code == 404:
-            continue
-        if detail.status_code != 200:
-            failures.append(f"detail {post_id}: HTTP {detail.status_code}")
-            continue
-        revision = detail.json().get("revision", 0)
-        deleted = client.delete_post(post_id, revision)
-        if deleted.status_code not in {200, 404, 410}:
-            failures.append(f"delete {post_id}: HTTP {deleted.status_code}")
+        phase = "detail"
+        try:
+            detail = client.post_detail(post_id)
+            if detail.status_code == 404:
+                continue
+            if detail.status_code != 200:
+                failures.append(f"detail {post_id}: HTTP {detail.status_code}")
+                continue
+            body = detail.json()
+            if not isinstance(body, dict):
+                failures.append(f"detail {post_id}: invalid JSON object")
+                continue
+            revision = body.get("revision")
+            if type(revision) is not int or revision <= 0:
+                failures.append(f"detail {post_id}: invalid revision")
+                continue
+            phase = "delete"
+            deleted = client.delete_post(post_id, revision)
+            if deleted.status_code not in {200, 404, 410}:
+                failures.append(f"delete {post_id}: HTTP {deleted.status_code}")
+        except Exception as exc:
+            failures.append(f"{phase} {post_id}: {type(exc).__name__}")
     _created_posts.clear()
     return failures
 
