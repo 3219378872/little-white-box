@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "observed_commit": "6c70d644a3d3138d684cd71abf588c7c0308dda8",
+  "shell": {"exit_code": 0, "files": 11},
+  "recipes": {"exit_code": 0},
+  "root_unit": {"exit_code": 0, "passed": 131, "seconds": 14.707},
+  "knowledge": {
+    "exit_code": 0,
+    "root_tests": 46,
+    "backend_knowledge_tests": 40,
+    "backend_engineering_tests": 11,
+    "frontend_documents": 63,
+    "frontend_requirements": 54,
+    "frontend_states": {"aligned": 25, "unknown": 28, "diverged": 1},
+    "existing_external_references": 11
+  },
+  "contracts": {
+    "exit_code": 0,
+    "backend_generated_drift": false,
+    "frontend_generated_drift": false,
+    "frontend_copies_byte_identical": true
+  },
+  "full_suite": {
+    "exit_code": 0,
+    "run_id": "r0908fixfull1",
+    "collected": 142,
+    "passed": 137,
+    "passed_real_stack": 123,
+    "passed_offline_cleanup_mocks": 14,
+    "skipped_fixture_only": 5,
+    "seconds": 180.27
+  },
+  "research_fixture": {
+    "exit_code": 0,
+    "run_id": "r0908fixresearch1",
+    "passed": 4,
+    "seconds": 6.95,
+    "normal_worker_restored_ready": true
+  },
+  "reset_fixture": {
+    "exit_code": 0,
+    "run_id": "r0908fixreset1",
+    "passed": 1,
+    "seconds": 1.11,
+    "normal_worker_restored_ready": true
+  },
+  "final_runtime": {
+    "entry_http_status": 200,
+    "frontend_http_status": 200,
+    "ready_status": "ready",
+    "dependencies_ok": 9,
+    "worker_ready": true,
+    "normal_provider_settings_matched": 26,
+    "env_unchanged": true,
+    "env_mode": "0600",
+    "fixture_stopped": true,
+    "optional_algorithm_services_started": false
+  },
+  "prior_failed_attempt": {
+    "observed_commit": "3f8a8f54e1ca511fe52dbe620ad6397e5e16b8be",
+    "command": "just test-dev",
+    "exit_code": 1,
+    "errors": 1,
+    "cause": "credential rotation test used the live runtime lock during startup",
+    "resolution": "isolate all runtime paths in the test TemporaryDirectory"
+  },
+  "limits": [
+    "live provider evidence covers basic generation, replay and Watch delivery only",
+    "research and reset fixtures use deterministic provider responses",
+    "no browser, native device, human review, capacity or production SLO acceptance",
+    "no optional algorithm service or vector inference validation",
+    "existing unknown and diverged requirements are unchanged"
+  ]
+}
