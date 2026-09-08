@@ -80,7 +80,9 @@ validate_dev_db_env
 
     def test_rotation_preserves_non_db_settings_and_validates_new_dsns(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
-            env_path = Path(tmp_dir) / "xbh-dev.env"
+            temp = Path(tmp_dir)
+            env_path = temp / "xbh-dev.env"
+            run_dir = temp / "run"
             env_path.write_text(
                 "# retained header\n"
                 "ASSISTANT_LLM_API_KEY='provider-test-value'\n"
@@ -94,7 +96,12 @@ validate_dev_db_env
             os.chmod(env_path, 0o600)
             script = f"""
 export ROOT={shlex.quote(str(ROOT))}
+export RUN_DIR={shlex.quote(str(run_dir))}
+export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
+export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
+export ETC_DIR={shlex.quote(str(temp / 'etc'))}
 export ENV_FILE={shlex.quote(str(env_path))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
 source {shlex.quote(str(STACK))}
 rotate_dev_db_credentials
 load_env
