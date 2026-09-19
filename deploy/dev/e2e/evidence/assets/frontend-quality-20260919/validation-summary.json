@@ -1,0 +1,14 @@
+{
+  "observed_commit": "db91c6fadac43679370031a3bc537d88be765076",
+  "scope": ["static", "unit"],
+  "shell_syntax": "passed",
+  "recipes": "passed",
+  "orchestration_tests_passed": 131,
+  "knowledge_check": "passed",
+  "external_upstream_references": 12,
+  "backend_generation_drift": false,
+  "frontend_sdk_drift": false,
+  "profile_http_tests_collected": 10,
+  "live_stack_running": false,
+  "http_e2e_browser_device": "not_run"
+}
