@@ -13,6 +13,7 @@ def test_public_profile_shape(admin, anon):
     for field in ("followerCount", "followingCount", "postCount"):
         assert isinstance(body[field], int) and body[field] >= 0
     assert isinstance(body["favoritesVisible"], bool)
+    assert body["isFollowing"] is False
 
 
 def test_profile_missing_user_404(anon):
@@ -71,12 +72,18 @@ def test_favorites_visibility_contract(make_user, published_post, admin, anon):
     assert public.status_code == 200
 
 
-def test_follow_unfollow_roundtrip(make_user):
-    a, b = make_user(), make_user()
+def test_follow_unfollow_roundtrip(make_user, anon):
+    a, b, other = make_user(), make_user(), make_user()
+    assert a.client.get_user(b.id).json()["isFollowing"] is False
     r = a.client.follow(b.id)
     assert r.status_code == 200, r.text[:200]
+    assert a.client.get_user(b.id).json()["isFollowing"] is True
+    assert other.client.get_user(b.id).json()["isFollowing"] is False
+    assert anon.get_user(b.id).json()["isFollowing"] is False
+    assert b.client.get_user(b.id).json()["isFollowing"] is False
     r = a.client.unfollow(b.id)
     assert r.status_code == 200, r.text[:200]
+    assert a.client.get_user(b.id).json()["isFollowing"] is False
 
 
 def test_follow_self_rejected(admin):
