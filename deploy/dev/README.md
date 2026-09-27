@@ -76,3 +76,18 @@
   `FORCE_FRONT_BUILD=1 just app-up` 强制重建）。DDC 调试模式（`make dev-real`）在当前
   SDK 下访客引导会被 DWDS RunRequest 门控卡死且附着即崩溃，仅限本机排障手动使用。
 - 易变踩坑细节一律看 [NOTES.md](../../NOTES.md)，本页只维护上述稳定事实。
+
+## 私信媒体上传
+
+`/api/v1/media/image|video|audio` 使用认证 multipart 上传。图片与音频文件上限 10 MiB，
+视频 100 MiB；反代额外保留 1 MiB 表单开销，超限返回 JSON 错误码 4001。音频支持 MP3/WAV/M4A，
+视频按容器轨道识别；不承诺转码或所有客户端的编码兼容性。视频/音频上传使用稳定
+`idempotencyKey`，消息发送另用独立幂等键。更换文件才建立新上传任务。
+
+运行 `just e2e deploy/dev/e2e/test_media_messages.py` 验证经同源入口的上传、媒体引用校验、
+重复请求、接收历史与超过 20 MiB 的视频。测试使用专门创建的测试账号及小型媒体样本。
+
+本地中间件默认子网已改为 `172.30.240.0/24`（动态池 `.128/25`，网关 `.1`），可同时覆盖
+`XBH_NETWORK_SUBNET`、`XBH_NETWORK_IP_RANGE`、`XBH_NETWORK_GATEWAY`。旧 Docker 网络不能
+原地修改 IPAM，需在停止应用后用同一 Compose project 重建网络和容器，保留所有 volumes。
+不要通过只改容器地址掩盖旧容器保留的固定 IP；正常服务依赖 DNS/宿主机映射端口。
