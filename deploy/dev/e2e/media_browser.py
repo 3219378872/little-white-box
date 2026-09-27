@@ -42,7 +42,7 @@ def run(base, output, chromium):
         tokens = dict(access_token=user['token'], refresh_token=user.get('refreshToken', ''),
                       access_expire=int(time.time()) + 1800, refresh_expire=int(time.time()) + 86400,
                       refresh_after=int(time.time()) + 1500, session_revision=1)
-        script = "localStorage.setItem('flutter.tokens', %s); localStorage.setItem('flutter.tokens.session_revision', '1');" % json.dumps(json.dumps(tokens))
+        script = "localStorage.setItem('flutter.tokens', JSON.stringify(JSON.stringify(%s))); localStorage.setItem('flutter.tokens.session_revision', '1');" % json.dumps(tokens)
         context.add_init_script(script)
         return context
 
@@ -82,17 +82,18 @@ def run(base, output, chromium):
                 enable(page)
                 page.get_by_role('button', name='打开视频', exact=True).first.wait_for()
                 page.get_by_role('button', name='播放语音文件', exact=True).first.wait_for()
-                with page.expect_popup() as opened:
-                    page.get_by_role('button', name='打开视频', exact=True).first.click()
-                opened.value.wait_for_load_state()
-                assert '/xbh-media/' in opened.value.url
-                opened.value.close()
+                for label in ['打开视频', '播放语音文件']:
+                    with page.expect_popup() as opened:
+                        page.get_by_role('button', name=label, exact=True).first.click()
+                    opened.value.wait_for_load_state()
+                    assert '/xbh-media/' in opened.value.url
+                    opened.value.close()
                 filename = f'media-{width}-{scheme}.png'
                 page.screenshot(path=output / filename)
                 assert not page.evaluate('document.body.scrollWidth > innerWidth')
                 assert not errors, errors
                 report['scenes'].append({'width': width, 'scheme': scheme, 'uploads': uploads,
-                                         'reloadHistory': True, 'openVideo': True, 'pageErrors': errors, 'screenshot': filename})
+                                         'reloadHistory': True, 'openVideo': True, 'openAudio': True, 'pageErrors': errors, 'screenshot': filename})
                 context.close()
             context = login_context(browser, receiver, 390, 'light')
             page = context.new_page()
