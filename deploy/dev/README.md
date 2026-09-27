@@ -91,3 +91,6 @@
 `XBH_NETWORK_SUBNET`、`XBH_NETWORK_IP_RANGE`、`XBH_NETWORK_GATEWAY`。旧 Docker 网络不能
 原地修改 IPAM，需在停止应用后用同一 Compose project 重建网络和容器，保留所有 volumes。
 不要通过只改容器地址掩盖旧容器保留的固定 IP；正常服务依赖 DNS/宿主机映射端口。
+
+Flutter Web 的本地 XFile 流通过 blob URL 读取；CSP `connect-src` 允许 `blob:`，媒体仍上传到同源
+Gateway。公开 `/xbh-media/` 资源请求不携带 API Bearer 头（对象存储不接受此认证格式）。
