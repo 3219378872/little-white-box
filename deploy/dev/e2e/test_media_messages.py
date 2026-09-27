@@ -19,7 +19,7 @@ def upload(client, kind, name, data=None, key=None):
     ('image', 'image.png', 2), ('video', 'clip.mp4', 3), ('audio', 'voice.wav', 4),
     ('audio', 'voice.m4a', 4), ('audio', 'voice.mp3', 4),
 ])
-def test_media_upload_send_replay_and_receiver_history(make_user, kind, name, msg_type):
+def test_media_upload_send_replay_and_receiver_history(make_user, anon, kind, name, msg_type):
     sender, receiver = make_user(), make_user()
     key = unique_key('upload')
     first = upload(sender.client, kind, name, key=key)
@@ -46,7 +46,7 @@ def test_media_upload_send_replay_and_receiver_history(make_user, kind, name, ms
         assert row['mediaId'] == media['mediaId']
         assert row['content'] == media['url']
         assert row['msgType'] == msg_type
-    fetched = receiver.client.get(media['url'])
+    fetched = anon.get(media['url'])
     assert fetched.status_code == 200
     if kind != 'image':
         assert fetched.content == (FIXTURES / name).read_bytes()

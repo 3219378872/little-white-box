@@ -61,6 +61,8 @@ def run(base, output, chromium):
                 page = context.new_page()
                 errors = []
                 page.on('pageerror', lambda e: errors.append(str(e)))
+                page.on('console', lambda m: print('console',m.type,m.text[:300],flush=True) if m.type=='error' else None)
+                page.on('response', lambda r: print('response',r.status,r.url.split('?')[0],flush=True) if '/api/' in r.url else None)
                 page.goto(route(sender, receiver))
                 enable(page)
                 uploads = []
@@ -105,6 +107,9 @@ def run(base, output, chromium):
             report['receiverHistory'] = True
             context.close()
         finally:
+            if 'page' in locals() and not page.is_closed():
+                page.screenshot(path=output / 'last-state.png')
+                print(page.locator('flt-semantics-host').inner_text()[:2000], flush=True)
             browser.close()
             (output / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'scenes': len(report['scenes']), 'receiverHistory': report.get('receiverHistory', False)}))
