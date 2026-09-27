@@ -1,0 +1,59 @@
+{
+  "network": "deploy_xbh-network",
+  "ipam": [
+    {
+      "Subnet": "172.30.240.0/24",
+      "IPRange": "172.30.240.128/25",
+      "Gateway": "172.30.240.1"
+    }
+  ],
+  "volume_names_before": [
+    "deploy_clickhouse_data",
+    "deploy_embedding_model_cache",
+    "deploy_es_data",
+    "deploy_etcd_data",
+    "deploy_grafana_data",
+    "deploy_loki_data",
+    "deploy_milvus_data",
+    "deploy_milvus_etcd",
+    "deploy_milvus_minio",
+    "deploy_minio_data",
+    "deploy_mysql-data",
+    "deploy_mysql-data-dev",
+    "deploy_mysql_data",
+    "deploy_pgdata",
+    "deploy_postgres_data",
+    "deploy_prometheus_data",
+    "deploy_redis_data",
+    "deploy_rocketmq_broker_logs",
+    "deploy_rocketmq_broker_store",
+    "deploy_rocketmq_namesrv_logs",
+    "deploy_seaweedfs_data",
+    "deploy_sub2api_data"
+  ],
+  "volume_names_after": [
+    "deploy_clickhouse_data",
+    "deploy_embedding_model_cache",
+    "deploy_es_data",
+    "deploy_etcd_data",
+    "deploy_grafana_data",
+    "deploy_loki_data",
+    "deploy_milvus_data",
+    "deploy_milvus_etcd",
+    "deploy_milvus_minio",
+    "deploy_minio_data",
+    "deploy_mysql-data",
+    "deploy_mysql-data-dev",
+    "deploy_mysql_data",
+    "deploy_pgdata",
+    "deploy_postgres_data",
+    "deploy_prometheus_data",
+    "deploy_redis_data",
+    "deploy_rocketmq_broker_logs",
+    "deploy_rocketmq_broker_store",
+    "deploy_rocketmq_namesrv_logs",
+    "deploy_seaweedfs_data",
+    "deploy_sub2api_data"
+  ],
+  "migration": "compose down/up without -v; normal stack running"
+}

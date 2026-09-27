@@ -1,0 +1,35 @@
+{
+  "endpoint": "https://api.weblearning.fun/v1",
+  "listed_models": [
+    "glm-5.3-flash",
+    "deepseek-v4.1-flash"
+  ],
+  "short_text_seconds": {
+    "deepseek-v4.1-flash": [
+      1.438897683
+    ],
+    "glm-5.3-flash": [
+      1.730854449,
+      2.226309135
+    ]
+  },
+  "deepseek_tool_probe": {
+    "responses_forced_tool": {
+      "http_status": 400,
+      "error": "Thinking mode does not support this tool_choice"
+    },
+    "responses_reasoning_none": "same forced-tool rejection",
+    "chat_completions_thinking_disabled": {
+      "http_status": 400,
+      "error": "A function or custom tool_choice needs a non-empty name."
+    }
+  },
+  "glm_canary_256_budget": {
+    "passed": true,
+    "first_round_total_tokens": 65,
+    "first_round_reasoning_tokens": 49,
+    "second_round_total_tokens": 44
+  },
+  "configuration_change": "No endpoint/model/credential change. Canary output budget is 256 per round, with exact nonce and acknowledgement checks retained.",
+  "limits": "Single samples measured earlier during this task, not a controlled benchmark. DeepSeek tool failures apply to the probed endpoint and request modes, not all DeepSeek tool support."
+}

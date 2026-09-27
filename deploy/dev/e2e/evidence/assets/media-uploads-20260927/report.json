@@ -1,0 +1,75 @@
+{
+  "base": "http://127.0.0.1:3002",
+  "scenes": [
+    {
+      "width": 320,
+      "scheme": "light",
+      "uploads": [
+        {
+          "kind": "image",
+          "mediaId": "362560151712055296"
+        },
+        {
+          "kind": "video",
+          "mediaId": "362560152940986368"
+        },
+        {
+          "kind": "audio",
+          "mediaId": "362560153985368064"
+        }
+      ],
+      "reloadHistory": true,
+      "openVideo": true,
+      "openAudio": true,
+      "pageErrors": [],
+      "screenshot": "media-320-light.png"
+    },
+    {
+      "width": 390,
+      "scheme": "dark",
+      "uploads": [
+        {
+          "kind": "image",
+          "mediaId": "362560165645533184"
+        },
+        {
+          "kind": "video",
+          "mediaId": "362560167625244672"
+        },
+        {
+          "kind": "audio",
+          "mediaId": "362560169290383360"
+        }
+      ],
+      "reloadHistory": true,
+      "openVideo": true,
+      "openAudio": true,
+      "pageErrors": [],
+      "screenshot": "media-390-dark.png"
+    },
+    {
+      "width": 1440,
+      "scheme": "light",
+      "uploads": [
+        {
+          "kind": "image",
+          "mediaId": "362560187585937408"
+        },
+        {
+          "kind": "video",
+          "mediaId": "362560193294385152"
+        },
+        {
+          "kind": "audio",
+          "mediaId": "362560198239469568"
+        }
+      ],
+      "reloadHistory": true,
+      "openVideo": true,
+      "openAudio": true,
+      "pageErrors": [],
+      "screenshot": "media-1440-light.png"
+    }
+  ],
+  "receiverHistory": true
+}

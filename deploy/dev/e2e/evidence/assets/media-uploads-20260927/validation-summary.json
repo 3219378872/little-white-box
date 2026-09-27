@@ -1,0 +1,39 @@
+{
+  "observed_commit": "82038b10d3fa9890866c2c95731bf417df88a0fd",
+  "root_tests_passed": 132,
+  "contract_check": "passed; backend and both Dart SDK copies current",
+  "knowledge_check": "passed; 12 external references valid",
+  "e2e": {
+    "passed": 31,
+    "seconds": 3.11,
+    "initial_attempt": {
+      "passed": 15,
+      "failed": 11,
+      "errors": 5,
+      "cause": "registration logged snowflake clock moved backwards; circuit rejection followed",
+      "recovery": "same committed code, separate rerun passed; no time/ID policy change"
+    }
+  },
+  "browser": {
+    "sender_scenarios": 3,
+    "receiver_history": true,
+    "page_errors": 0,
+    "viewport_theme": [
+      "320 light",
+      "390 dark",
+      "1440 light"
+    ]
+  },
+  "runtime": {
+    "entry_http_status": 200,
+    "readiness": "ready",
+    "dependency_count": 9,
+    "assistant_worker": "alive ready",
+    "embedding_and_online_infer": "not running; not required for these media/message cases"
+  },
+  "limits": [
+    "No device runtime, sustained performance, production or long agent workflow acceptance",
+    "Docker volume name comparison does not assert byte-for-byte data integrity",
+    "Provider probes are single samples; no model switch"
+  ]
+}
