@@ -61,7 +61,7 @@ def run(base, output, chromium):
                 page = context.new_page()
                 errors = []
                 page.on('pageerror', lambda e: errors.append(str(e)))
-                page.on('console', lambda m: print('console',m.type,m.text[:300],flush=True) if m.type=='error' else None)
+                page.on('console', lambda m: errors.append('console: ' + m.text[:300]) if m.type=='error' else None)
                 page.on('response', lambda r: print('response',r.status,r.url.split('?')[0],flush=True) if '/api/' in r.url else None)
                 page.goto(route(sender, receiver))
                 enable(page)

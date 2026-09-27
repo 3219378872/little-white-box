@@ -94,3 +94,8 @@
 
 Flutter Web 的本地 XFile 流通过 blob URL 读取；CSP `connect-src` 允许 `blob:`，媒体仍上传到同源
 Gateway。公开 `/xbh-media/` 资源请求不携带 API Bearer 头（对象存储不接受此认证格式）。
+
+本地生成的 media-rpc 配置默认通过 `http://127.0.0.1:<ENTRY_PORT>/xbh-media` 发布文件，
+与网页同源；对象存储的内部连接仍使用 8333。外部浏览器访问时，将 `MEDIA_PUBLIC_BASE_URL`
+设为该浏览器使用的站点 origin 加 `/xbh-media`（例如 `https://dev.example/xbh-media`），
+再重启应用；不得把内部 S3 地址当作浏览器资源地址。子仓配置模板不由根编排改写。

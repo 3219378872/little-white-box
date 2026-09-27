@@ -58,6 +58,29 @@ prepare_etc
             self.assertIn("  Port: 9133", rendered_mq)
             self.assertIn("  Host: 0.0.0.0", agent_config.read_text())
 
+    def test_media_public_url_uses_entry_origin_and_preserves_template(self):
+        for override in ("", "https://dev.example/xbh-media"):
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as tmp:
+                temp = Path(tmp)
+                backend = temp / "backend"
+                rel = Path("app/media/rpc/etc/media.yaml")
+                source = backend / rel
+                source.parent.mkdir(parents=True)
+                original = 'S3Storage:\n  PublicBaseURL: "http://127.0.0.1:8333/xbh-media"\n'
+                source.write_text(original)
+                etc = temp / "etc"
+                run_bash(f"""
+export BACKEND={shlex.quote(str(backend))}
+export ETC_DIR={shlex.quote(str(etc))}
+export ENTRY_PORT=4102
+export MEDIA_PUBLIC_BASE_URL={shlex.quote(override)}
+source {shlex.quote(str(STACK))}
+prepare_etc
+""")
+                expected = override or "http://127.0.0.1:4102/xbh-media"
+                self.assertIn(expected, (etc / rel).read_text())
+                self.assertEqual(source.read_text(), original)
+
     def test_prepare_etc_rejects_invalid_agent_metrics_port(self):
         for port in ("0", "65536", "not-a-port"):
             with self.subTest(port=port), tempfile.TemporaryDirectory() as tmp_dir:

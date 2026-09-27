@@ -235,6 +235,23 @@ prepare_etc() {
       )
     fi
     sed "${sed_args[@]}" "$BACKEND/$rel" >"$ETC_DIR/$rel" || exit $?
+    if [[ "$rel" == "app/media/rpc/etc/media.yaml" ]]; then
+      python3 - "$ETC_DIR/$rel" "$MEDIA_PUBLIC_BASE_URL" <<'PYMEDIA' || exit $?
+import json
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+lines = path.read_text().splitlines()
+for index, line in enumerate(lines):
+    if line.lstrip().startswith("PublicBaseURL:"):
+        indent = line[:len(line) - len(line.lstrip())]
+        lines[index] = indent + "PublicBaseURL: " + json.dumps(sys.argv[2])
+        break
+else:
+    raise SystemExit("media PublicBaseURL missing from runtime template")
+path.write_text("\n".join(lines) + "\n")
+PYMEDIA
+    fi
     if [[ "$rel" == "app/assistant/worker/etc/agent.yaml" ]] &&
       ! assistant_agent_metrics_config_matches \
         "$ETC_DIR/$rel" "$ASSISTANT_AGENT_METRICS_PORT"; then
