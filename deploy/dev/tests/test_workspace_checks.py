@@ -136,7 +136,7 @@ class WorkspaceFixture:
                     fixture_manifest(BACKEND, {"CORE-001": "Community requirement"})
                 ),
                 "export_fixture.py": EXPORTER,
-                "app/gateway/gateway.api": "syntax = 'v1'\n",
+                "app/gateway/openapi.yaml": "openapi: 3.0.3\n",
                 "generated.txt": "current\n",
                 "Makefile": "generate:\n\t@:\nengineering-lint:\n\t@:\n"
                 + export_recipe,
@@ -956,7 +956,7 @@ class ContractCheckTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             fixture = WorkspaceFixture(Path(temporary_directory))
             calls = []
-            mutable_api = fixture.backend / "app/gateway/gateway.api"
+            mutable_api = fixture.backend / "app/gateway/openapi.yaml"
             mutable_api.write_text("dirty checkout API\n", encoding="utf-8")
 
             def record(repository, command, *, label, env):
@@ -986,7 +986,7 @@ class ContractCheckTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(calls[0][3]["BACKEND_API"], str(calls[0][5]))
-            self.assertEqual(calls[0][4], b"syntax = 'v1'\n")
+            self.assertEqual(calls[0][4], b"openapi: 3.0.3\n")
             self.assertNotEqual(calls[0][5], mutable_api)
             self.assertFalse(calls[0][5].exists())
 

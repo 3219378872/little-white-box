@@ -44,7 +44,7 @@
 | 仓库 | 本地位置 | 职责与入口 |
 | --- | --- | --- |
 | [little-white-box](https://github.com/3219378872/little-white-box) | 当前目录 | 本地栈、跨仓校验、黑盒测试；命令入口为 `justfile` |
-| [little-white-box-content-community](https://github.com/3219378872/little-white-box-content-community) | `little-white-box-content-community/` | Go / go-zero 服务、公开 REST 与内部 RPC 契约；命令入口为 `Makefile` |
+| [little-white-box-content-community](https://github.com/3219378872/little-white-box-content-community) | `little-white-box-content-community/` | Go / Kitex + Hertz 服务、公开 REST 与内部 RPC 契约；命令入口为 `Makefile` |
 | [little-white-box-front](https://github.com/3219378872/little-white-box-front) | `little-white-box-front/` | Flutter 客户端、Mock API 与 Dart SDK 集成；命令入口为 `Makefile` |
 
 本地 Web 联调的默认拓扑如下；完整后端服务分工见后端 README。
@@ -60,7 +60,7 @@ flowchart LR
 
 `:3002` 同时提供页面、API 与媒体入口；`:3003` 默认承载 release 静态包，不是 API 反向代理。
 根仓只记录子仓 gitlink，不接管子仓源文件。公开 REST 和 Flutter SDK 的生成源是后端
-`app/gateway/gateway.api`；后端 `.proto` 只定义内部 RPC。两份 Dart SDK 的同步由前端仓工具完成。
+`app/gateway/openapi.yaml`；后端 `.proto` 只定义内部 RPC。两份 Dart SDK 的同步由前端仓工具完成。
 
 ## 快速开始
 

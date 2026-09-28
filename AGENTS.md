@@ -16,14 +16,14 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 
 | 目录 | 说明 | 规则入口 |
 | --- | --- | --- |
-| [little-white-box-content-community](little-white-box-content-community/) | Go / go-zero 后端 | [little-white-box-content-community/AGENTS.md](little-white-box-content-community/AGENTS.md) |
+| [little-white-box-content-community](little-white-box-content-community/) | Go / Kitex + Hertz 后端 | [little-white-box-content-community/AGENTS.md](little-white-box-content-community/AGENTS.md) |
 | [little-white-box-front](little-white-box-front/) | Flutter 前端 | [little-white-box-front/AGENTS.md](little-white-box-front/AGENTS.md) |
 
 - 后端、前端任务先读对应子仓 `AGENTS.md`；正式知识从各自 `docs/knowledge/README.md` 按需加载，
   不遍历目录。
 - 启动、联调、排障先看 [NOTES.md](NOTES.md)（现场备忘，非规范），再下到对应子仓。
 - 跨端公开 REST 与 Flutter SDK 的生成源是后端
-  `little-white-box-content-community/app/gateway/gateway.api`；后端 `.proto` 只生成内部 RPC
+  `little-white-box-content-community/app/gateway/openapi.yaml`；后端 `.proto` 只生成内部 RPC
   契约。Dart 生成文件必须同步到前端 `vendor/sdk_source` 与 `lib/sdk`，两侧改动分别走各自子仓流程，
   根仓不代改。
 

@@ -108,7 +108,7 @@ assistant_agent_ready_matches() {
   assistant_agent_launch_matches "$pid" "$token"
 }
 
-# go-zero launches the Prometheus server goroutine before the worker constructs
+# The service bootstrap launches its diagnostics server before the worker constructs
 # its ServiceContext, but the listener may bind later. Bind readiness to this
 # launch's immutable pid/token and the post-canary marker, then verify that the
 # same process owns the metrics listener.

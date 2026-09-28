@@ -995,7 +995,7 @@ class WorkspaceChecker:
         if not executable.is_file() or not os.access(executable, os.X_OK):
             return False
         result = _run(
-            [str(executable), "-c", "import grpc_tools.protoc"],
+            [str(executable), "-c", "import grpc_tools.protoc; import yaml; import openapi_spec_validator"],
             cwd=self.root,
             check=False,
         )
@@ -1112,14 +1112,14 @@ class WorkspaceChecker:
                     drift.replace(b"\x00", b"\n").decode(errors="replace").strip()
                 )
                 raise CheckError(
-                    "backend .api/.proto generated-code drift detected after make generate:\n"
+                    "backend OpenAPI/.proto generated-code drift detected after make generate:\n"
                     + rendered
                 )
 
     def check_frontend_sdk(self, pinned_backend_revision: str) -> None:
         frontend = self.repositories[FRONTEND_REPOSITORY]
         backend = self.repositories[BACKEND_REPOSITORY]
-        backend_api_relative = PurePosixPath("app/gateway/gateway.api")
+        backend_api_relative = PurePosixPath("app/gateway/openapi.yaml")
         backend_api_blob = _run(
             ["git", "show", f"{pinned_backend_revision}:{backend_api_relative}"],
             cwd=backend.path,
@@ -1128,7 +1128,7 @@ class WorkspaceChecker:
         with tempfile.TemporaryDirectory(
             prefix="xbh-backend-api-", dir=self.temporary_parent
         ) as temporary_directory:
-            backend_api = Path(temporary_directory) / "gateway.api"
+            backend_api = Path(temporary_directory) / "openapi.yaml"
             backend_api.write_bytes(backend_api_blob.stdout)
             environment = self._child_environment()
             environment["BACKEND_API"] = str(backend_api)

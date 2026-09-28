@@ -36,7 +36,7 @@
 - `just knowledge-check`：先运行根检查器单测，再核对两个 gitlink 与子仓 HEAD、校验固定提交上的
   跨仓引用，并调用后端 `make engineering-lint` 与前端 `make knowledge-check`
 - `just contract-check`：在一次性本地 clone 中运行后端 `make generate` 并要求零差异，再调用前端
-  `make sdk-check` 并逐字节核对两份 Gateway SDK；缺少 `grpc_tools.protoc` 时可用
+  `make sdk-check` 并逐字节核对两份 Gateway SDK；生成需固定版本的 Kitex/protoc 插件及后端 `requirements-generate.txt` 中的 Python 依赖；缺少这些 Python 模块时可用
   `BACKEND_GENERATE_PYTHON` 指定 Python 可执行文件，或用 `GENERATE_PYTHON_BIN_DIR` 指定其 bin 目录
 - 分步控制：`middleware-up/down` 只管 Docker 中间件（保留数据卷）；`app-up/down` 只管
   本机进程与反代；`infer-up/down` 管可选算法服务（compose profile `algorithm`：
@@ -86,6 +86,12 @@
 
 运行 `just e2e deploy/dev/e2e/test_media_messages.py` 验证经同源入口的上传、媒体引用校验、
 重复请求、接收历史与超过 20 MiB 的视频。测试使用专门创建的测试账号及小型媒体样本。
+
+浏览器回归需要安装 `requests`、`playwright` 并提供 Chromium。运行
+`python deploy/dev/e2e/media_browser.py --output <目录>` 验证真实文件选择、上传、发送和历史；
+`python deploy/dev/e2e/gateway_browser.py --output <目录>` 验证界面登录、过期凭据恢复、内容互动与
+Assistant 重载订阅。后者用无效 access token 触发真实刷新，保留有效 refresh token，产物不保存令牌。
+Assistant 检查依赖正常 worker/provider 配置；订阅重连通过不代表模型回答质量通过。
 
 本地中间件默认子网已改为 `172.30.240.0/24`（动态池 `.128/25`，网关 `.1`），可同时覆盖
 `XBH_NETWORK_SUBNET`、`XBH_NETWORK_IP_RANGE`、`XBH_NETWORK_GATEWAY`。旧 Docker 网络不能
