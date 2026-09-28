@@ -47,7 +47,11 @@ def run(base, output, chromium):
             page.goto(base + '/#/auth/login')
             enable_semantics(page)
             page.get_by_role('textbox', name='用户名', exact=True).fill(username)
-            page.get_by_label('密码', exact=True).fill(password)
+            # Flutter replaces its password input when focus changes. Keyboard events
+            # after focusing reach the controller; a one-shot DOM fill can be lost.
+            password_field = page.get_by_label('密码', exact=True)
+            password_field.click()
+            password_field.press_sequentially(password, delay=35)
             with page.expect_response(lambda r: r.url.endswith('/api/v1/auth/login')) as login:
                 page.get_by_role('button', name='登录', exact=True).click()
             assert login.value.status == 200, login.value.status
@@ -90,7 +94,9 @@ def run(base, output, chromium):
             page.goto(base + '/#/messages/assistant')
             page.reload()
             enable_semantics(page)
-            page.get_by_role('textbox', name=re.compile('消息|输入消息')).fill('请只回复：迁移验证完成。')
+            message_field = page.get_by_role('textbox', name=re.compile('消息|输入消息'))
+            message_field.click()
+            message_field.press_sequentially('请只回复：迁移验证完成。', delay=35)
             page.get_by_role('button', name='发送', exact=True).click()
             with page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/api/v2/assistant/messages'), timeout=60000) as posted:
                 page.get_by_role('button', name='同意并启用', exact=True).click()
