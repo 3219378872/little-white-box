@@ -1,0 +1,5 @@
+	dep	github.com/cloudwego/hertz	v0.10.6	h1:VXUO0RdycrYOv8x2JgbQCJh2ovTrkRM6tS4isHN9dwI=
+	dep	github.com/cloudwego/kitex	v0.16.2	h1:dI3ha2st1hwexqA+n9xDdGlb3oQZqbhxNDpe+WmIwww=
+	build	vcs.revision=c879c6b0b866460584080f0799e1028f87e7f3c8
+	build	vcs.time=2026-09-28T07:10:04Z
+	build	vcs.modified=false

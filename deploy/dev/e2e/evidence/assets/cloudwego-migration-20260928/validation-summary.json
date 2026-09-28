@@ -1,0 +1,61 @@
+{
+  "observedCommit": "630f61107426f627b348d645106d634a39b70e89",
+  "checks": {
+    "rootKnowledge": {
+      "result": "passed",
+      "sha256": "49313c1106f06625d08a2ebdae4bdee6ada560bccba934c25ce9ba88b69205da"
+    },
+    "rootContract": {
+      "result": "passed",
+      "sha256": "4393d62e904674ac6b840eedc95051903087c83dc9480266225d6b36f9b7e94f"
+    },
+    "rootUnit": {
+      "result": "passed",
+      "sha256": "dca123d3ceec9f2fb700a326ec7224b3c51da42214d68f7d8697cee6c5ff25a3"
+    },
+    "e2e": {
+      "result": "passed",
+      "sha256": "d496fdb949d5c537200af5090ad092c33c5d50a2ec5eacb9235fdf88a8642eb6"
+    },
+    "researchFixture": {
+      "result": "passed",
+      "sha256": "3cb6c0aa306b4b0863b83361369edb6f8d9a74a8182fff503ef01e30741e0aee"
+    },
+    "resetFixture": {
+      "result": "passed",
+      "sha256": "6c18ef349cba50339a36a2c3b51d778f61c6643e27c9b393ff32249431554d61"
+    },
+    "mediaBrowser": {
+      "result": "passed",
+      "sha256": "3afe8ce9e2e700cce13abfdbadb3d4d821065b07c6748d8ea919b52a5d9c90b9"
+    },
+    "gatewayBrowser": {
+      "result": "passed",
+      "sha256": "c3ff74738e6ca34136fe004ede74fe99d750133d80627b93ab24a12a61aaad56"
+    },
+    "providerAfterRestore": {
+      "result": "passed",
+      "sha256": "d7c09c328120a4d9da1d424bd7b04644efd37555138672ea139cfe668a274823"
+    }
+  },
+  "rootTests": 132,
+  "e2ePassed": 148,
+  "e2eSkipped": 5,
+  "fixtureSkippedCasesSeparatelyPassed": 5,
+  "composeVolumesPreserved": 22,
+  "normalProviderRestored": true,
+  "rollback": "snapshots prepared; not executed",
+  "notValidated": [
+    "production deployment",
+    "capacity",
+    "device runtime",
+    "long-term model quality",
+    "monthly SLO"
+  ],
+  "initialE2E": {
+    "passed": 147,
+    "failed": 1,
+    "skipped": 5,
+    "failure": "empty search query returned 5001 instead of 2; fixed and full suite rerun"
+  }
+}

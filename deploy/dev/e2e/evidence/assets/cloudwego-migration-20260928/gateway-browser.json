@@ -1,0 +1,11 @@
+{
+  "base": "http://127.0.0.1:3002",
+  "trigger": "invalid access token with valid refresh token",
+  "uiLogin": true,
+  "refresh": true,
+  "contentActions": true,
+  "assistantReload": true,
+  "pageErrors": [],
+  "runId": "376",
+  "postCleanup": true
+}

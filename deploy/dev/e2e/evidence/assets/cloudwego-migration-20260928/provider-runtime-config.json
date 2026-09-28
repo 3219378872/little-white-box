@@ -1,0 +1,8 @@
+{
+  "ASSISTANT_LLM_ENABLED": "true",
+  "ASSISTANT_LLM_MODEL": "glm-5.3-flash",
+  "ASSISTANT_LLM_WIRE_API": "responses",
+  "ASSISTANT_LLM_FALLBACK_ENABLED": "false",
+  "endpointOrigin": "https://api.weblearning.fun",
+  "localFixture": false
+}
