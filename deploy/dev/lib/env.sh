@@ -211,7 +211,27 @@ rotate_dev_db_credentials() {
   with_app_lifecycle_lock exclusive rotate_dev_db_credentials_locked
 }
 
+normalize_stack_ports() {
+  local name port
+  for name in ENTRY_PORT FRONT_PORT GATEWAY_PORT; do
+    port="${!name}"
+    if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] ||
+      ((10#$port < 1 || 10#$port > 65535)); then
+      echo "invalid $name: $port" >&2
+      return 1
+    fi
+    printf -v "$name" '%s' "$((10#$port))"
+  done
+}
+
+prepare_proxy_conf() {
+  normalize_stack_ports || return $?
+  python3 "$ROOT/deploy/dev/render_ports.py" proxy "$PROXY_CONF" "$PROXY_RUNTIME_CONF" \
+    "$ENTRY_PORT" "$FRONT_PORT" "$GATEWAY_PORT"
+}
+
 prepare_etc() {
+  normalize_stack_ports || return $?
   normalize_assistant_agent_metrics_port || return $?
   mkdir -p "$ETC_DIR" || return $?
   (
@@ -235,8 +255,12 @@ prepare_etc() {
       )
     fi
     sed "${sed_args[@]}" "$BACKEND/$rel" >"$ETC_DIR/$rel" || exit $?
+    if [[ "$rel" == "app/gateway/etc/gateway.yaml" ]]; then
+      python3 "$ROOT/deploy/dev/render_ports.py" gateway "$ETC_DIR/$rel" "$ETC_DIR/$rel" \
+        "$ENTRY_PORT" "$FRONT_PORT" "$GATEWAY_PORT" || exit $?
+    fi
     if [[ "$rel" == "app/media/rpc/etc/media.yaml" ]]; then
-      python3 - "$ETC_DIR/$rel" "$MEDIA_PUBLIC_BASE_URL" <<'PYMEDIA' || exit $?
+      python3 - "$ETC_DIR/$rel" "${MEDIA_PUBLIC_BASE_URL:-http://127.0.0.1:$ENTRY_PORT/xbh-media}" <<'PYMEDIA' || exit $?
 import json
 import pathlib
 import sys

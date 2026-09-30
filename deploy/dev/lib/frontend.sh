@@ -24,6 +24,7 @@ ensure_web_canvaskit() {
 
 proxy_up() {
   local was_running=0 running_state container_names status
+  prepare_proxy_conf || return $?
   if container_names="$(docker ps -a --format '{{.Names}}')"; then
     :
   else
@@ -38,7 +39,7 @@ proxy_up() {
   fi
   echo "starting $PROXY_NAME on :$ENTRY_PORT"
   docker run -d --name "$PROXY_NAME" --network host --restart unless-stopped \
-    -v "$PROXY_CONF:/etc/nginx/nginx.conf:ro" \
+    -v "$PROXY_RUNTIME_CONF:/etc/nginx/nginx.conf:ro" \
     nginx:stable-alpine >/dev/null || return $?
   if [[ "$was_running" == "0" ]]; then
     track_app_started_service proxy
@@ -66,6 +67,7 @@ proxy_down() {
 }
 
 frontend_up() {
+  normalize_stack_ports || return $?
   local pidfile="$PID_DIR/frontend.pid"
   local logfile="$LOG_DIR/frontend.log"
   local pid build_status token cleanup_status=0
@@ -73,8 +75,13 @@ frontend_up() {
   touch "$logfile" || return $?
   chmod 600 "$logfile" || return $?
   if pid="$(validated_service_pid frontend "$pidfile")"; then
-    echo "already running: frontend pid=$pid"
-    return 0
+    if [[ "${FORCE_FRONT_BUILD:-0}" != "1" ]]; then
+      echo "already running: frontend pid=$pid"
+      return 0
+    fi
+    # Stop before modifying the served directory. A failed forced rebuild leaves
+    # the frontend stopped rather than serving an old or partially written bundle.
+    stop_svc frontend || return $?
   fi
   prepare_service_start_state frontend "$pidfile" || return $?
 
@@ -100,22 +107,25 @@ frontend_up() {
   fi
 
   local bundle="$FRONTEND/build/web"
+  local -a build_args=(build web --release -t lib/main.dart --no-web-resources-cdn
+    "--dart-define=FLUTTER_WEB_CANVASKIT_URL=${canvaskit_url:-/canvaskit/}")
+  local before after stamp_tmp
   local needs_build=0
   if [[ "${FORCE_FRONT_BUILD:-0}" == "1" || ! -f "$bundle/index.html" ]]; then
     needs_build=1
-  elif ! front_bundle_fresh; then
+  elif ! front_bundle_fresh "${build_args[@]}"; then
     needs_build=1
   fi
 
   if [[ "$needs_build" == "1" ]]; then
+    before="$(front_build_fingerprint "${build_args[@]}")" || return $?
+    rm -f "$RUN_DIR/front-build.stamp" || return $?
     echo "building frontend (release)..."
     if (
       cd "$FRONTEND" || exit $?
       env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
         -u ALL_PROXY -u all_proxy \
-        flutter build web --release -t lib/main.dart \
-        --no-web-resources-cdn \
-        --dart-define=FLUTTER_WEB_CANVASKIT_URL="${canvaskit_url:-/canvaskit/}"
+        flutter "${build_args[@]}"
     ) >>"$logfile" 2>&1; then
       build_status=0
     else
@@ -126,7 +136,21 @@ frontend_up() {
       echo "frontend build failed; refusing to serve an existing bundle; see $logfile" >&2
       return "$build_status"
     fi
-    touch "$RUN_DIR/front-build.stamp" || return $?
+    after="$(front_build_fingerprint "${build_args[@]}")" || return $?
+    if [[ "$before" != "$after" ]]; then
+      echo "frontend inputs changed during build; refusing to serve; retry app-up" >&2
+      return 1
+    fi
+    [[ -f "$bundle/index.html" ]] || {
+      echo "frontend build did not produce index.html" >&2
+      return 1
+    }
+    stamp_tmp="$(mktemp "$RUN_DIR/front-build.stamp.XXXXXX")" || return $?
+    if ! printf '%s\n' "$after" >"$stamp_tmp" ||
+      ! mv -f "$stamp_tmp" "$RUN_DIR/front-build.stamp"; then
+      rm -f "$stamp_tmp"
+      return 1
+    fi
   else
     echo "frontend bundle up to date; set FORCE_FRONT_BUILD=1 to rebuild"
   fi
@@ -159,13 +183,17 @@ frontend_up() {
   track_app_started_service frontend
 }
 
-# True when no tracked frontend source is newer than the last build stamp.
+# Fingerprint paths + contents + build flags + populated SDK identity. No Flutter
+# command is executed by this check; unreadable/missing inputs fail closed.
+front_build_fingerprint() {
+  local flutter
+  flutter="$(command -v flutter)" || return $?
+  python3 "$ROOT/deploy/dev/front_build_inputs.py" "$FRONTEND" "$flutter" "$@"
+}
+
 front_bundle_fresh() {
-  local stamp="$RUN_DIR/front-build.stamp"
+  local stamp="$RUN_DIR/front-build.stamp" current
   [[ -f "$stamp" ]] || return 1
-  local changed roots=("$FRONTEND/lib" "$FRONTEND/web" "$FRONTEND/pubspec.yaml" "$FRONTEND/pubspec.lock")
-  [[ -d "$FRONTEND/assets" ]] && roots+=("$FRONTEND/assets")
-  changed="$(find "${roots[@]}" \
-    -type f -newer "$stamp" -print -quit 2>/dev/null)" || return $?
-  [[ -z "$changed" ]]
+  current="$(front_build_fingerprint "$@")" || return $?
+  [[ "$current" == "$(<"$stamp")" ]]
 }

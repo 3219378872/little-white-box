@@ -15,6 +15,7 @@ import functools
 import http.server
 import os
 import sys
+import urllib.parse
 
 WASM_MIME = "application/wasm"
 NO_CACHE_TYPES = (".html", ".js", ".json")
@@ -48,7 +49,8 @@ class ReleaseHandler(http.server.SimpleHTTPRequestHandler):
 
     def send_head(self):
         path = self.translate_path(self.path)
-        if not os.path.exists(path) and "/" in self.path and "." not in os.path.basename(self.path):
+        pathname = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        if not os.path.exists(path) and "." not in os.path.basename(pathname):
             self.path = "/index.html"
         return super().send_head()
 
