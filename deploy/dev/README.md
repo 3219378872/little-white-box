@@ -90,6 +90,9 @@ URL 使用同一组值。自定义 `PROXY_CONF` 必须是包含 `@@ENTRY_PORT@@`
   SDK 下访客引导会被 DWDS RunRequest 门控卡死且附着即崩溃，仅限本机排障手动使用。
 - 易变踩坑细节一律看 [NOTES.md](../../NOTES.md)，本页只维护上述稳定事实。
 
+普通 `/api/` 请求不在 nginx 缓冲完整请求体，直接交给 Gateway 执行绝对摄取期限；
+`client_body_timeout 3s` 仅限制两次读取之间的空闲时间。媒体沿用独立上传预算，SSE 路由不变。
+
 ## 私信媒体上传
 
 `/api/v1/media/image|video|audio` 使用认证 multipart 上传。图片与音频文件上限 10 MiB，
