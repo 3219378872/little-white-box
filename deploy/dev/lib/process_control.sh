@@ -8,15 +8,10 @@ secure_runtime_paths() {
 }
 
 clear_sensitive_assistant_logs() {
-  local name logfile
-  for name in assistant-rpc assistant-watch assistant-agent; do
-    logfile="$LOG_DIR/$name.log"
-    if [[ -e "$logfile" && ! -L "$logfile" ]]; then
-      : >"$logfile" || return $?
-      chmod 600 "$logfile" || return $?
-    fi
-    rm -f "$logfile.1.gz" || return $?
-  done
+  # Stop and wait before cleanup so an old maintainer cannot re-enter rotation.
+  # The Python helper also takes the rotation lock and removes interrupted temps.
+  stop_svc log-maintainer || return $?
+  python3 "$ROOT/deploy/dev/log_maintainer.py" "$LOG_DIR" --clear-assistant
 }
 
 # True while a process group contains at least one runnable or sleeping member.
@@ -342,9 +337,7 @@ start_svc() {
   [[ "$build_status" -eq 0 ]] || return "$build_status"
   mv -f "$executable.tmp" "$executable" || return $?
   if [[ "$name" == "assistant-agent" ]]; then
-    : >"$logfile" || return $?
-    chmod 600 "$logfile" || return $?
-    rm -f "$logfile.1.gz" || return $?
+    python3 "$ROOT/deploy/dev/log_maintainer.py" "$LOG_DIR"       --clear-name assistant-agent || return $?
   fi
   echo "starting $name"
   token="$(new_managed_process_token "$name")" || return $?
