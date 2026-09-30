@@ -27,7 +27,7 @@ export ROOT={shlex.quote(str(ROOT))}
 export FRONTEND={shlex.quote(str(frontend))}
 export RUN_DIR={shlex.quote(str(run_dir))}
 source {shlex.quote(str(STACK))}
-find() {{ return 52; }}
+front_build_fingerprint() {{ return 52; }}
 set +e
 front_bundle_fresh
 status=$?
@@ -63,6 +63,7 @@ export ETC_DIR={shlex.quote(str(temp / 'etc'))}
 export FORCE_FRONT_BUILD=1
 export PATH={shlex.quote(str(fake_bin))}:$PATH
 source {shlex.quote(str(STACK))}
+front_build_fingerprint() {{ echo synthetic-inputs; }}
 setsid() {{ return 0; }}
 frontend_up
 """
@@ -84,6 +85,7 @@ export ROOT={shlex.quote(str(ROOT))}
 export TEST_PROXY_EXISTS={existed}
 export TEST_PROXY_RUNNING={running_state}
 source {shlex.quote(str(STACK))}
+prepare_proxy_conf() {{ return 0; }}
 docker() {{
   if [[ "$1" == ps ]]; then
     [[ "$TEST_PROXY_EXISTS" == 0 ]] || builtin printf '%s\n' "$PROXY_NAME"
@@ -121,6 +123,7 @@ fi
         script = f"""
 export ROOT={shlex.quote(str(ROOT))}
 source {shlex.quote(str(STACK))}
+prepare_proxy_conf() {{ return 0; }}
 docker() {{
   if [[ "$1" == ps ]]; then
     return 0
@@ -147,6 +150,7 @@ builtin printf 'status=%s starts=%s\n' "$status" "${{APP_UP_STARTED_SERVICES[*]}
         script = f"""
 export ROOT={shlex.quote(str(ROOT))}
 source {shlex.quote(str(STACK))}
+prepare_proxy_conf() {{ return 0; }}
 docker() {{ return 54; }}
 set +e
 proxy_up
@@ -163,6 +167,7 @@ builtin printf 'status=%s\n' "$status"
         script = f"""
 export ROOT={shlex.quote(str(ROOT))}
 source {shlex.quote(str(STACK))}
+prepare_proxy_conf() {{ return 0; }}
 docker() {{ return 53; }}
 set +e
 proxy_down

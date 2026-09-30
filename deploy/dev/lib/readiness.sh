@@ -7,32 +7,15 @@ port_open() {
 }
 
 wait_port() {
-  local host="$1" port="$2" seconds="${3:-180}" label="${4:-$host:$port}"
-  local i
-  for ((i = 0; i < seconds; i++)); do
-    if port_open "$host" "$port"; then
-      echo "ready: $label"
-      return 0
-    fi
-    sleep 1
-  done
-  echo "timeout waiting for $label" >&2
-  return 1
+  local host="$1" port="$2" seconds="${3:-180}"
+  local label="${4:-$host:$port}"
+  python3 "$ROOT/deploy/dev/wait_ready.py" port "$seconds" "$label" "$host" "$port"
 }
 
 wait_http() {
-  local url="$1" seconds="${2:-90}" label="${3:-$url}"
-  local i code
-  for ((i = 0; i < seconds; i++)); do
-    code="$(http_code "$url")"
-    if [[ "$code" == "200" ]]; then
-      echo "ready: $label"
-      return 0
-    fi
-    sleep 1
-  done
-  echo "timeout waiting for $label" >&2
-  return 1
+  local url="$1" seconds="${2:-90}"
+  local label="${3:-$url}"
+  python3 "$ROOT/deploy/dev/wait_ready.py" http "$seconds" "$label" "$url"
 }
 
 # Single capture: curl failures (timeout, refused) must yield exactly "000",

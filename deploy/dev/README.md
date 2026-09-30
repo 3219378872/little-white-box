@@ -16,6 +16,12 @@
 | 宿主机 `:18080` | SeaweedFS 卷 HTTP（容器内 8080） |
 | `:9333` / `:8333` | SeaweedFS master / S3 |
 
+`ENTRY_PORT`、`FRONT_PORT`、`GATEWAY_PORT` 是上述三项端口的唯一配置源（1–65535）。
+`prepare_etc` 改写 Gateway 的直接 `RestConf.Port`，`proxy_up` 将
+`deploy/dev/proxy.conf` 模板渲染到 `$ETC_DIR/proxy.conf` 后挂载；前端监听、就绪检查与媒体默认公开
+URL 使用同一组值。自定义 `PROXY_CONF` 必须是包含 `@@ENTRY_PORT@@`、`@@FRONT_PORT@@`、
+`@@GATEWAY_PORT@@` 的模板；可用 `PROXY_RUNTIME_CONF` 覆盖生成副本路径，不改源模板。
+
 ### 命令
 
 - `just test-dev`：使用根仓隔离知识 Python 发现 `deploy/dev/tests/` 的全部编排单测；不连接真实栈，
@@ -25,6 +31,8 @@
   `middleware-up` 的 schema patch，最后启动同一源码版本的应用；禁止带旧进程重放迁移。
   `down` 会停应用、反代、algorithm profile（embedding-service / online-infer）和默认中间件
   容器，保留数据卷。`up` 不启也不停 infer。
+- HTTP/端口就绪等待的秒数是整个等待的单调时钟预算，探针与重试睡眠共用该预算；允许小数，
+  0 表示立即超时，负数及非有限值无效。
 - `just restart`：只反弹应用与默认中间件，已在跑的 infer 保持不动；`just status`：容器、
   进程 pid 存活与关键端口探测（含 `:50051` / `:9025`）
 - `just rotate-db-credentials`：只轮换本地 app/E2E MySQL 凭据并原子改写 env，不输出新值；
@@ -73,7 +81,11 @@
 - CanvasKit 由静态伺服层从 `<front>/web/canvaskit/`（编排层符号链接到 SDK 缓存，随升级
   自动跟随）同源提供，构建期经 `--dart-define` 注入；SDK 缺失时回退 gstatic 并打警告。
 - `:3003/:3002` 对外提供的是 **release 构建静态包**（lib/ 变化后 `app-up` 自动重建，
-  `FORCE_FRONT_BUILD=1 just app-up` 强制重建）。DDC 调试模式（`make dev-real`）在当前
+  `FORCE_FRONT_BUILD=1 just app-up` 强制重建，已运行时也会先停前端再重建/重启；失败时保持停止，
+  不提供旧包或构建中的半成品）。构建缓存记录输入路径/内容、编译参数和已初始化 SDK 的
+  `bin/cache/flutter.version.json` 指纹；删除、重命名或 SDK 变化均失效。构建前后指纹必须相同，
+  才会原子记录缓存标记；构建期间输入变化会报错，重跑 `app-up`。指纹检查不执行 Flutter 或下载 SDK。
+  DDC 调试模式（`make dev-real`）在当前
   SDK 下访客引导会被 DWDS RunRequest 门控卡死且附着即崩溃，仅限本机排障手动使用。
 - 易变踩坑细节一律看 [NOTES.md](../../NOTES.md)，本页只维护上述稳定事实。
 
