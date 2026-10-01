@@ -79,10 +79,49 @@ require_compose_version() {
   fi
 }
 
+# The broker container runs the backend's init-topics.sh, so its TOPICS array
+# is the only list worth waiting for; a copy here drifts when the backend drops
+# a topic and a fresh volume then never becomes ready.
+rocketmq_bootstrap_topics() {
+  local script="$BACKEND/deploy/rocketmq/init-topics.sh"
+  local line state=0 word
+  local -a words topics=()
+  if [[ ! -f "$script" ]]; then
+    echo "missing RocketMQ bootstrap script: $script" >&2
+    return 1
+  fi
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    if [[ "$state" -eq 0 ]]; then
+      [[ "$line" =~ ^[[:space:]]*TOPICS=\([[:space:]]*$ ]] && state=1
+      continue
+    fi
+    if [[ "$line" =~ ^[[:space:]]*\)[[:space:]]*$ ]]; then
+      state=2
+      break
+    fi
+    read -r -a words <<<"$line"
+    for word in "${words[@]}"; do
+      if [[ ! "$word" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        echo "unsupported RocketMQ topic entry in $script: $word" >&2
+        return 1
+      fi
+      topics+=("$word")
+    done
+  done <"$script"
+  if [[ "$state" -ne 2 || "${#topics[@]}" -eq 0 ]]; then
+    echo "no TOPICS=( ... ) list found in $script" >&2
+    return 1
+  fi
+  printf '%s\n' "${topics[@]}"
+}
+
 wait_topics() {
   local seconds="${1:-180}"
-  local needed=(post-create post-update post-delete user-behavior-v2 message-push media-deleted review-submitted review-decided)
-  local i list ok t
+  local -a needed
+  local i list ok t topics
+  topics="$(rocketmq_bootstrap_topics)" || return $?
+  mapfile -t needed <<<"$topics"
   for ((i = 0; i < seconds; i += 2)); do
     list="$(docker exec xbh-rocketmq-broker sh -c 'sh mqadmin topicList -n rocketmq-namesrv:9876' 2>/dev/null || true)"
     ok=1
