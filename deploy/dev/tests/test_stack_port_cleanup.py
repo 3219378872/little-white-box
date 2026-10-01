@@ -111,6 +111,30 @@ listening_port_pids 8888
 
         self.assertEqual(result.stdout.splitlines(), ["222", "333", "444"])
 
+    def test_lsof_port_owner_listing_matches_ss_allowlist(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            bin_dir = Path(tmp_dir)
+            for tool in ("awk", "sort"):
+                (bin_dir / tool).symlink_to(shutil.which(tool))
+            lsof = bin_dir / "lsof"
+            lsof.write_text(
+                "#!/bin/sh\n"
+                "[ \"$2\" = -iTCP:8888 ] || exit 3\n"
+                "printf '%s\\n' p111 f3 n127.0.0.2:8888 p222 f3 n127.0.0.1:8888 "
+                "p333 f4 n*:8888 p444 n[::]:8888 p555 n[::1]:8888\n",
+                encoding="ascii",
+            )
+            lsof.chmod(0o700)
+            script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+source {shlex.quote(str(STACK))}
+PATH={shlex.quote(str(bin_dir))}
+listening_port_pids 8888
+"""
+            result = run_bash(script)
+
+            self.assertEqual(result.stdout.splitlines(), ["222", "333", "444"])
+
     def test_app_down_leaves_unknown_port_owner_running(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             temp = Path(tmp_dir)

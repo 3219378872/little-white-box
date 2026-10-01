@@ -540,8 +540,22 @@ listening_port_pids() {
       }' | sort -u
     return 0
   fi
+  # lsof's @127.0.0.1 filter misses wildcard listeners (*:port), so list every
+  # listener on the port and apply the same address allowlist as ss above.
   if command -v lsof >/dev/null 2>&1; then
-    lsof -nP -t -iTCP@127.0.0.1:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true
+    (lsof -nP -iTCP:"$port" -sTCP:LISTEN -F pn 2>/dev/null || true) | awk -v port="$port" '
+      /^p[0-9]+$/ { pid = substr($0, 2); next }
+      /^n/ {
+        local_address = substr($0, 2)
+        if (pid != "" &&
+            (local_address == "127.0.0.1:" port ||
+             local_address == "0.0.0.0:" port ||
+             local_address == "*:" port ||
+             local_address == "[::]:" port ||
+             local_address == "[::ffff:127.0.0.1]:" port)) {
+          print pid
+        }
+      }' | sort -u
   fi
 }
 
