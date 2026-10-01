@@ -2,6 +2,25 @@
 
 工作区根目录备忘，不是任一子仓正式知识链的一部分。事实以当时代码、配置和现场命令为准。
 
+## 2026-10-01 云端全新环境联调
+
+- 首次在全新数据卷上起栈（4 核 / 15 GiB / 无 swap / 无 IPv6 / 无 `ss` 的 KVM 容器），暴露的问题都被
+  旧数据卷或旧机器掩盖过：
+  - `wait_topics` 写死已删除的 `message-push`（后端 `cf61737` 已移除）→ 根仓改读后端 `init-topics.sh`。
+  - search-rpc 启动强制要求 `xbh_posts` 存在，而索引只由 search-mq/rebuild 创建 → 根仓改为
+    search-mq 建好索引后再启动 search-rpc。
+  - 无 `ss` 时 `lsof @127.0.0.1` 看不到 `*:9136`，assistant-agent 就绪永远超时 → 根仓修 lsof 分支。
+  - 主机无 IPv6 时 nginx `listen [::]` 直接退出 → 根仓新增 `PROXY_IPV6=auto|1|0`。
+  - SeaweedFS 默认 8 个卷槽位，`xbh-ad-private` 出现后 `xbh-media` 无可写卷，媒体上传全 500 →
+    后端分支 `claude/serene-bardeen-cjjmig` 设 `-volume.max=100`，待合入后端 main 并更新 gitlink。
+- 仅限该环境的现场处理（未入库）：MinIO 官方镜像已无法匿名拉取，用 `RELEASE.2025-09-07` 源码自建
+  本地镜像并打上两个 compose tag；Docker Hub 匿名限流时经 `mirror.gcr.io` 拉取后重打 tag；沙箱
+  nofile 硬上限 20000，用 `OVERRIDE` 指向会话副本把 ClickHouse ulimits 降到 20000；磁盘配额让 ES
+  误判超过高水位，临时 `cluster.routing.allocation.disk.threshold_enabled=false`。
+- 结果：`just up` 通过，`/api/v1/health/ready` 为 ready 且 11 项依赖 ok；`just e2e`（排除需真实
+  LLM 计费的 `test_assistant*.py`）在修复 SeaweedFS 后为媒体相关 5 个文件 32 passed、1 skipped，
+  其余 126 passed 未受影响。
+
 ## 2026-09-07 职责拆分联调
 
 - stack.sh 现为 28 行 source 入口，固定加载 deploy/dev/lib/ 下 10 个模块；默认值位于 config.sh。
