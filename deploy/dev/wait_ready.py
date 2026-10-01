@@ -20,17 +20,19 @@ def wait(probe, seconds: float, *, clock=time.monotonic, sleep=time.sleep) -> bo
     return False
 
 
-def run_probe(command: list[str], remaining: float, http=False) -> bool:
+def run_probe(command: list[str], remaining: float, http=False, expect: bytes | None = None) -> bool:
     try:
         result = subprocess.run(command, capture_output=True, timeout=remaining, check=False)
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return result.returncode == 0 and (not http or result.stdout == b'200')
+    if http:
+        expect = b'200'
+    return result.returncode == 0 and (expect is None or result.stdout.strip() == expect)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('kind', choices=('http', 'port'))
+    parser.add_argument('kind', choices=('http', 'port', 'healthy'))
     parser.add_argument('seconds', type=float)
     parser.add_argument('label')
     parser.add_argument('target', nargs='+')
@@ -43,6 +45,14 @@ def main() -> int:
         def probe(remaining):
             return run_probe(['curl', '-sS', '-o', '/dev/null', '-w', '%{http_code}',
                               '--max-time', str(min(3.0, remaining)), args.target[0]], remaining, http=True)
+    elif args.kind == 'healthy':
+        if len(args.target) != 1:
+            parser.error('healthy expects one container name')
+        # A published port opens as soon as the container starts, long before the
+        # server inside accepts work; the container healthcheck is the real signal.
+        def probe(remaining):
+            return run_probe(['docker', 'inspect', '-f', '{{.State.Health.Status}}', args.target[0]],
+                             remaining, expect=b'healthy')
     else:
         if len(args.target) != 2:
             parser.error('port expects host and port')

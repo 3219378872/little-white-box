@@ -409,7 +409,9 @@ middleware_up_locked() {
   require_compose_version || return $?
   echo "starting middleware containers"
   compose up -d || return $?
-  wait_port 127.0.0.1 3306 90 mysql || return $?
+  # Patches and seeds exec into these containers right away; the published
+  # port opens before the server does, so wait for the container healthcheck.
+  wait_healthy xbh-mysql 120 mysql || return $?
   apply_dev_user || return $?
   apply_sql_patches || return $?
   apply_new_schema_baselines || return $?
@@ -421,7 +423,7 @@ middleware_up_locked() {
   wait_port 127.0.0.1 9876 90 rocketmq-namesrv || return $?
   wait_port 127.0.0.1 10911 180 rocketmq-broker || return $?
   wait_topics 180 || return $?
-  wait_port 127.0.0.1 8123 60 clickhouse || return $?
+  wait_healthy xbh-clickhouse 120 clickhouse || return $?
   apply_analytics_schema || return $?
   wait_http "http://127.0.0.1:3100/ready" 90 loki || return $?
   wait_port 127.0.0.1 9333 60 seaweedfs-master || true

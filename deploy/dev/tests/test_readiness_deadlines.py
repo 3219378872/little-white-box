@@ -3,6 +3,7 @@ from pathlib import Path
 import shlex
 import socket
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -67,6 +68,42 @@ class ReadinessDeadlinesTest(unittest.TestCase):
         self.assertFalse(ready.wait(probe, 1, clock=lambda: now[0], sleep=sleep))
         self.assertEqual(len(sleeps), 1)
         self.assertAlmostEqual(sleeps[0], .2)
+
+    def fake_docker(self, directory, statuses):
+        state = Path(directory) / 'calls'
+        docker = Path(directory) / 'docker'
+        docker.write_text(
+            '#!/bin/sh\n'
+            f'[ "$1 $2 $3 $4" = "inspect -f {{{{.State.Health.Status}}}} xbh-mysql" ] || exit 9\n'
+            f'n=$(cat {shlex.quote(str(state))} 2>/dev/null || echo 0)\n'
+            f'echo $((n + 1)) > {shlex.quote(str(state))}\n'
+            f'set -- {" ".join(statuses)}\n'
+            'shift "$n" 2>/dev/null || true\n'
+            'echo "${1:-starting}"\n',
+            encoding='ascii',
+        )
+        docker.chmod(0o700)
+        return state
+
+    def test_container_healthy_waits_past_an_open_but_starting_container(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calls = self.fake_docker(directory, ['starting', 'starting', 'healthy'])
+            result = run_bash(
+                f'PATH={shlex.quote(directory)}:$PATH; source {shlex.quote(str(STACK))}; '
+                'wait_healthy xbh-mysql 10 mysql')
+            self.assertIn('ready: mysql', result.stdout)
+            self.assertEqual(calls.read_text().strip(), '3')
+
+    def test_container_healthy_times_out_while_unhealthy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.fake_docker(directory, ['unhealthy'] * 20)
+            started = time.monotonic()
+            result = run_bash(
+                f'PATH={shlex.quote(directory)}:$PATH; source {shlex.quote(str(STACK))}; '
+                'wait_healthy xbh-mysql .3 mysql', check=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertLess(time.monotonic() - started, .8)
+            self.assertIn('timeout waiting for mysql', result.stderr)
 
     def test_invalid_budgets_rejected(self):
         for seconds in ('-1', 'nan', 'inf', 'not-a-number'):

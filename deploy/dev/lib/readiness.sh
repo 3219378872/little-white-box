@@ -18,6 +18,12 @@ wait_http() {
   python3 "$ROOT/deploy/dev/wait_ready.py" http "$seconds" "$label" "$url"
 }
 
+wait_healthy() {
+  local container="$1" seconds="${2:-180}"
+  local label="${3:-$container}"
+  python3 "$ROOT/deploy/dev/wait_ready.py" healthy "$seconds" "$label" "$container"
+}
+
 # Single capture: curl failures (timeout, refused) must yield exactly "000",
 # not "000\n000" from a fallback echo racing with -w output.
 http_code() {
