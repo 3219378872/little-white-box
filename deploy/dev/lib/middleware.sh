@@ -1,9 +1,12 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
 
+# The opt-in algorithm/training services read model-registry credentials
+# without defaults; pass them through (empty when unset) so compose does not
+# warn on every middleware command.
 compose() {
-  MINIO_ROOT_USER="${MINIO_ROOT_USER:-admin}" \
-  MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-Xbh@Minio2024!}" \
+  MODEL_S3_ACCESS_KEY="${MODEL_S3_ACCESS_KEY:-}" \
+  MODEL_S3_SECRET_KEY="${MODEL_S3_SECRET_KEY:-}" \
   docker compose -p "$COMPOSE_PROJECT" \
     -f "$COMPOSE_FILE" \
     -f "$OVERRIDE" \
