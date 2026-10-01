@@ -345,16 +345,24 @@ def test_watch_crud_and_unknown_condition(user, make_user, published_post):
         "targetType": "author",
         "targetId": author_id,
     }
-    created = client.create_assistant_watch(payload)
-    _assert_assistant_store_ok(created, "POST /assistant/watch")
-    assert created.status_code == 200, created.text[:200]
-    task = created.json().get("task") or {}
-    task_id = task.get("id")
-    task_version = task.get("version")
-    assert isinstance(task_id, int) and task_id > 0
-    assert isinstance(task_version, int) and task_version > 0
+    # WCH-021: Watch task CRUD requires Agent consent.
+    client.set_agent_consent(False)
+    denied = client.create_assistant_watch(payload)
+    _assert_assistant_store_ok(denied, "POST /assistant/watch no consent")
+    assert_error(denied, 403, 6001)
 
+    _grant(client)
+    task_id = None
     try:
+        created = client.create_assistant_watch(payload)
+        _assert_assistant_store_ok(created, "POST /assistant/watch")
+        assert created.status_code == 200, created.text[:200]
+        task = created.json().get("task") or {}
+        task_id = task.get("id")
+        task_version = task.get("version")
+        assert isinstance(task_id, int) and task_id > 0
+        assert isinstance(task_version, int) and task_version > 0
+
         listed = client.list_assistant_watch()
         _assert_assistant_store_ok(listed, "GET /assistant/watch")
         assert listed.status_code == 200, listed.text[:200]
@@ -397,13 +405,15 @@ def test_watch_crud_and_unknown_condition(user, make_user, published_post):
             f"unknown conditionType must be 4xx, got {unknown.status_code}: "
             f"{unknown.text[:200]}")
     finally:
-        deleted = client.delete_assistant_watch(task_id, task_version)
-        _assert_assistant_store_ok(deleted, "DELETE /assistant/watch")
-        assert deleted.status_code == 200, deleted.text[:200]
-        remaining = client.list_assistant_watch()
-        assert remaining.status_code == 200, remaining.text[:200]
-        assert all(item.get("id") != task_id
-                   for item in remaining.json().get("tasks") or [])
+        if task_id is not None:
+            deleted = client.delete_assistant_watch(task_id, task_version)
+            _assert_assistant_store_ok(deleted, "DELETE /assistant/watch")
+            assert deleted.status_code == 200, deleted.text[:200]
+            remaining = client.list_assistant_watch()
+            assert remaining.status_code == 200, remaining.text[:200]
+            assert all(item.get("id") != task_id
+                       for item in remaining.json().get("tasks") or [])
+        client.set_agent_consent(False)
 
 
 def test_watch_rejects_own_author_and_revision(user, make_user, published_post):
