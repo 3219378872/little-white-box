@@ -35,7 +35,7 @@ APP_UP_TRACK_STARTS=1
 APP_UP_STARTED_SERVICES=(test)
 source {shlex.quote(str(STACK))}
 [[ "$APP_UP_TRACK_STARTS" == 0 && "${{#APP_UP_STARTED_SERVICES[@]}}" == 0 ]]
-[[ "${{#RPC_SERVICES[@]}}" == 10 && "${{#MQ_SERVICES[@]}}" == 8 ]]
+[[ "${{#RPC_SERVICES[@]}}" == 12 && "${{#MQ_SERVICES[@]}}" == 10 ]]
 [[ ! -v _XBH_STACK_LIB_DIR ]]
 """)
 

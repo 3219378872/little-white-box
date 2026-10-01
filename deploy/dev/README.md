@@ -14,7 +14,10 @@
 | `127.0.0.1:8888` | Gateway |
 | 宿主机 `:33000` | Grafana（容器内 3000） |
 | 宿主机 `:18080` | SeaweedFS 卷 HTTP（容器内 8080） |
-| `:9333` / `:8333` | SeaweedFS master / S3 |
+| `:9333` / `:8333` | SeaweedFS master / S3（匿名只读 `xbh-media`；广告私有桶 `xbh-ad-private` 不可匿名读） |
+| `127.0.0.1:9027` / `:9028` | review-rpc / ad-rpc（DevServer `:9127` / `:9128`） |
+| `127.0.0.1:9137` / `:9138` | review-worker / ad-mq 指标 |
+| `127.0.0.1:9026` | 审核精排占位 sidecar `moderation-infer`（`infer-up` 才启动） |
 
 `ENTRY_PORT`、`FRONT_PORT`、`GATEWAY_PORT` 是上述三项端口的唯一配置源（1–65535）。
 `prepare_etc` 改写 Gateway 的直接 `RestConf.Port`，`proxy_up` 将
@@ -48,7 +51,11 @@ URL 使用同一组值。自定义 `PROXY_CONF` 必须是包含 `@@ENTRY_PORT@@`
   `BACKEND_GENERATE_PYTHON` 指定 Python 可执行文件，或用 `GENERATE_PYTHON_BIN_DIR` 指定其 bin 目录
 - 分步控制：`middleware-up/down` 只管 Docker 中间件（保留数据卷）；`app-up/down` 只管
   本机进程与反代；`infer-up/down` 管可选算法服务（compose profile `algorithm`：
-  embedding-service + online-infer，首次启动需下载模型权重，未启动时推荐走规则降级）
+  embedding-service + online-infer + moderation-infer，首次启动需下载模型权重，未启动时推荐走规则降级，
+  审核级联把候选全部转人审）
+- `just review-role grant <userId> <roles> [markets] [languages]` / `revoke <userId>`：经后端
+  `app/review/rolectl` 授予或撤销审核角色（reviewer、qa、policy_admin、qualification_reviewer）并写审计；
+  这是唯一授权路径，没有在线接口。e2e 审核员只授予演示市场 `ID` / `id`，与手工联调数据隔离。
 
 ### 运行时产物与数据
 
@@ -65,6 +72,9 @@ URL 使用同一组值。自定义 `PROXY_CONF` 必须是包含 `@@ENTRY_PORT@@`
 - `app-up` 会在启动前清空历史 `assistant-rpc`、`assistant-watch`、`assistant-agent` 运行日志；这些
   日志可能含用户输入、工具参数或内容摘要，不跨版本保留。清理前停止并等待旧日志维护器；
   清理、归档发布与截断共享目录锁，并删除这三个服务被中断轮转留下的临时归档。锁文件不随清理删除。
+- 广告与审核权威库 `xbh_ad`（`DB_AD`）、`xbh_review`（`DB_REVIEW`）缺省由 `DB_CONTENT` 换库名推导；
+  `middleware-up` 对存量数据卷重放这两个库的幂等基线后再授权，应用账号对 `xbh_review.audit_log`
+  只有 SELECT/INSERT。dev 默认 `MODERATION_FIXTURE_ENABLED=1`，e2e 可用文案标记驱动占位精排分数。
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
   可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
   （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。

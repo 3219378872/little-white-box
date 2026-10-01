@@ -172,7 +172,17 @@ middleware-down:
     source "$ROOT/deploy/dev/stack.sh"
     middleware_down
 
-# 可选算法服务（embedding + 在线推理；首次启动需下载模型权重）
+# 审核角色运维（RVW-050，只经此脚本授予/撤销并写审计）：grant <userId> <roles> [markets] [languages] | revoke <userId>
+[positional-arguments]
+review-role *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ROOT="{{root}}"
+    # shellcheck source=/dev/null
+    source "$ROOT/deploy/dev/stack.sh"
+    review_role "$@"
+
+# 可选算法服务（embedding + 在线推理 + 审核精排占位；首次启动需下载模型权重）
 infer-up:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -181,7 +191,7 @@ infer-up:
     source "$ROOT/deploy/dev/stack.sh"
     algorithm_up
 
-# 停可选算法服务（embedding + 在线推理；容器只停不删，保留数据卷）
+# 停可选算法服务（embedding + 在线推理 + 审核精排占位；容器只停不删，保留数据卷）
 infer-down:
     #!/usr/bin/env bash
     set -euo pipefail

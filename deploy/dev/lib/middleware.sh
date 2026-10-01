@@ -81,7 +81,7 @@ require_compose_version() {
 
 wait_topics() {
   local seconds="${1:-180}"
-  local needed=(post-create post-update post-delete user-behavior-v2 message-push media-deleted)
+  local needed=(post-create post-update post-delete user-behavior-v2 message-push media-deleted review-submitted review-decided)
   local i list ok t
   for ((i = 0; i < seconds; i += 2)); do
     list="$(docker exec xbh-rocketmq-broker sh -c 'sh mqadmin topicList -n rocketmq-namesrv:9876' 2>/dev/null || true)"
@@ -148,6 +148,8 @@ apply_dev_db_grants() {
   echo "seeding isolated app/e2e database accounts (${app_user}, ${e2e_user})"
   mysql_root <<SQL
 CREATE DATABASE IF NOT EXISTS xbh_assistant DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS xbh_ad DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS xbh_review DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE USER IF NOT EXISTS '${app_user}'@'%';
 SET @app_password = CONVERT(X'${app_pass_hex}' USING utf8mb4);
@@ -163,6 +165,18 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_media.* TO '${app_user}'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_message.* TO '${app_user}'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_feed.* TO '${app_user}'@'%';
 GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_assistant.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_ad.* TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.review_snapshot TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.review_task TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.review_stage_result TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.review_decision TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.verdict_cache TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.approved_media TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.review_seed TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.reviewer TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.event_outbox TO '${app_user}'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_review.idempotency TO '${app_user}'@'%';
+GRANT SELECT, INSERT ON xbh_review.audit_log TO '${app_user}'@'%';
 
 CREATE USER IF NOT EXISTS '${e2e_user}'@'%';
 SET @e2e_password = CONVERT(X'${e2e_pass_hex}' USING utf8mb4);
@@ -178,10 +192,25 @@ GRANT SELECT ON xbh_media.* TO '${e2e_user}'@'%';
 GRANT SELECT ON xbh_message.* TO '${e2e_user}'@'%';
 GRANT SELECT ON xbh_feed.* TO '${e2e_user}'@'%';
 GRANT SELECT ON xbh_assistant.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_ad.* TO '${e2e_user}'@'%';
+GRANT SELECT ON xbh_review.* TO '${e2e_user}'@'%';
 
 DROP USER IF EXISTS 'xbh'@'%';
 DROP USER IF EXISTS 'xbh'@'localhost';
 SQL
+}
+
+# Schemas added after the initdb.d baseline (xbh_ad, xbh_review) never run on
+# existing volumes. Their files are CREATE ... IF NOT EXISTS only, so replaying
+# them is idempotent; table-level review grants need the tables to exist first.
+apply_new_schema_baselines() {
+  local schema sql
+  for schema in xbh_ad xbh_review; do
+    sql="$BACKEND/deploy/sql/$schema.sql"
+    [[ -f "$sql" ]] || continue
+    echo "applying $schema baseline schema"
+    mysql_root <"$sql" || return $?
+  done
 }
 
 # Replay the backend's idempotent schema patches (deploy/sql/patches/) against
@@ -337,6 +366,7 @@ middleware_up_locked() {
   wait_port 127.0.0.1 3306 90 mysql || return $?
   apply_dev_user || return $?
   apply_sql_patches || return $?
+  apply_new_schema_baselines || return $?
   apply_dev_db_grants || return $?
   apply_eval_corpus || return $?
   wait_port 127.0.0.1 6379 60 redis || return $?
@@ -374,9 +404,10 @@ middleware_down() {
 algorithm_up_locked() {
   load_env || return $?
   require_compose_version || return $?
-  echo "starting algorithm containers (embedding-service, online-infer)"
+  echo "starting algorithm containers (embedding-service, online-infer, moderation-infer)"
   COMPOSE_PROFILES=algorithm compose up -d || return $?
   wait_port 127.0.0.1 9025 300 online-infer || return $?
+  wait_port 127.0.0.1 9026 120 moderation-infer || return $?
 }
 
 algorithm_up() {
@@ -385,7 +416,7 @@ algorithm_up() {
 
 algorithm_down_locked() {
   echo "stopping algorithm containers"
-  COMPOSE_PROFILES=algorithm compose stop online-infer embedding-service || return $?
+  COMPOSE_PROFILES=algorithm compose stop online-infer embedding-service moderation-infer || return $?
 }
 
 algorithm_down() {

@@ -50,6 +50,8 @@ RPC_SERVICES=(
   "message-rpc|$BACKEND|./app/message/rpc|-f|$ETC_DIR/app/message/rpc/etc/message.yaml"
   "feed-rpc|$BACKEND|./app/feed/rpc|-f|$ETC_DIR/app/feed/rpc/etc/feed.yaml"
   "assistant-rpc|$BACKEND|./app/assistant/rpc|-f|$ETC_DIR/app/assistant/rpc/etc/assistant.yaml"
+  "review-rpc|$BACKEND|./app/review/rpc|-f|$ETC_DIR/app/review/rpc/etc/review.yaml"
+  "ad-rpc|$BACKEND|./app/ad/rpc|-f|$ETC_DIR/app/ad/rpc/etc/ad.yaml"
 )
 
 MQ_SERVICES=(
@@ -61,5 +63,7 @@ MQ_SERVICES=(
   "content-cleanup|$BACKEND|./app/content/mq/cleanup|-f|$ETC_DIR/app/content/mq/cleanup/etc/content-cleanup.yaml"
   "assistant-watch|$BACKEND|./app/assistant/mq|-f|$ETC_DIR/app/assistant/mq/etc/watch-consumer.yaml"
   "assistant-agent|$BACKEND|./app/assistant/worker|-f|$ETC_DIR/app/assistant/worker/etc/agent.yaml"
+  "review-worker|$BACKEND|./app/review/worker|-f|$ETC_DIR/app/review/worker/etc/review-worker.yaml"
+  "ad-mq|$BACKEND|./app/ad/mq|-f|$ETC_DIR/app/ad/mq/etc/ad-consumer.yaml"
 )
 

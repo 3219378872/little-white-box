@@ -63,6 +63,11 @@ apply_dev_db_grants
             output,
         )
         self.assertIn("GRANT SELECT ON xbh_assistant.* TO 'e2e_test'@'%';", output)
+        # DB_AD/DB_REVIEW are derived from DB_CONTENT; review audit stays append-only (RVW-025).
+        self.assertIn("GRANT SELECT, INSERT, UPDATE, DELETE ON xbh_ad.* TO 'app_test'@'%';", output)
+        self.assertIn("GRANT SELECT, INSERT ON xbh_review.audit_log TO 'app_test'@'%';", output)
+        self.assertNotIn("ON xbh_review.* TO 'app_test'@'%'", output)
+        self.assertIn("GRANT SELECT ON xbh_review.* TO 'e2e_test'@'%';", output)
         self.assertIn("DROP USER IF EXISTS 'xbh'@'%';", output)
 
     def test_shared_or_legacy_accounts_are_rejected(self):

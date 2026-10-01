@@ -60,15 +60,27 @@ load_env() {
   export ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_READ_COST_PER_MILLION_TOKENS:-0}"
   export ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_CACHE_WRITE_COST_PER_MILLION_TOKENS:-0}"
   export ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS="${ASSISTANT_LLM_FALLBACK_REASONING_COST_PER_MILLION_TOKENS:-0}"
+  # Review cascade ranker: the stub sidecar (just infer-up) on loopback. When it
+  # is not running the worker degrades every candidate to human review.
+  export MODERATION_INFER_ADDRESS="${MODERATION_INFER_ADDRESS:-127.0.0.1:9026}"
+  # Dev-only: lets e2e drive deterministic ranker scores with text markers.
+  export MODERATION_FIXTURE_ENABLED="${MODERATION_FIXTURE_ENABLED:-1}"
   ensure_assistant_db_env || return $?
   validate_dev_db_env
 }
 
-# assistant.yaml DataSource is "${DB_ASSISTANT}". Older env files only set
-# DB_CONTENT; derive the DSN by swapping the schema name, keep user/query.
+# assistant.yaml DataSource is "${DB_ASSISTANT}"; ad and review services use
+# "${DB_AD}" / "${DB_REVIEW}". Older env files only set DB_CONTENT; derive the
+# DSNs by swapping the schema name, keep user/query.
 ensure_assistant_db_env() {
   if [[ -z "${DB_ASSISTANT:-}" && -n "${DB_CONTENT:-}" ]]; then
     export DB_ASSISTANT="${DB_CONTENT/xbh_content/xbh_assistant}"
+  fi
+  if [[ -z "${DB_AD:-}" && -n "${DB_CONTENT:-}" ]]; then
+    export DB_AD="${DB_CONTENT/xbh_content/xbh_ad}"
+  fi
+  if [[ -z "${DB_REVIEW:-}" && -n "${DB_CONTENT:-}" ]]; then
+    export DB_REVIEW="${DB_CONTENT/xbh_content/xbh_review}"
   fi
 }
 
@@ -102,8 +114,9 @@ validate_dev_db_env() {
     return 1
   fi
 
+  ensure_assistant_db_env || return 1
   local key value expected_prefix="${app_user}:${app_pass}@tcp("
-  for key in DB_CONTENT DB_USER DB_INTERACTION DB_MEDIA DB_MESSAGE DB_FEED DB_ASSISTANT; do
+  for key in DB_CONTENT DB_USER DB_INTERACTION DB_MEDIA DB_MESSAGE DB_FEED DB_ASSISTANT DB_AD DB_REVIEW; do
     value="${!key:-}"
     if [[ -z "$value" || "$value" != "$expected_prefix"* ]]; then
       echo "$key must use APP_MYSQL_USER/APP_MYSQL_PASSWORD over a tcp DSN" >&2
@@ -165,7 +178,7 @@ rotate_dev_db_credentials_locked() {
       if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(APP_MYSQL_USER|APP_MYSQL_PASSWORD|E2E_MYSQL_USER|E2E_MYSQL_PASSWORD)[[:space:]]*= ]]; then
         continue
       fi
-      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(DB_CONTENT|DB_USER|DB_INTERACTION|DB_MEDIA|DB_MESSAGE|DB_FEED|DB_ASSISTANT)[[:space:]]*= ]]; then
+      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?(DB_CONTENT|DB_USER|DB_INTERACTION|DB_MEDIA|DB_MESSAGE|DB_FEED|DB_ASSISTANT|DB_AD|DB_REVIEW)[[:space:]]*= ]]; then
         key="${BASH_REMATCH[2]}"
         value="${line#*=}"
         value="${value#"${value%%[![:space:]]*}"}"
@@ -259,7 +272,8 @@ prepare_etc() {
       python3 "$ROOT/deploy/dev/render_ports.py" gateway "$ETC_DIR/$rel" "$ETC_DIR/$rel" \
         "$ENTRY_PORT" "$FRONT_PORT" "$GATEWAY_PORT" || exit $?
     fi
-    if [[ "$rel" == "app/media/rpc/etc/media.yaml" ]]; then
+    if [[ "$rel" == "app/media/rpc/etc/media.yaml" || "$rel" == "app/ad/rpc/etc/ad.yaml" ||
+      "$rel" == "app/ad/mq/etc/ad-consumer.yaml" ]]; then
       python3 - "$ETC_DIR/$rel" "${MEDIA_PUBLIC_BASE_URL:-http://127.0.0.1:$ENTRY_PORT/xbh-media}" <<'PYMEDIA' || exit $?
 import json
 import pathlib
