@@ -195,10 +195,14 @@ def test_new_revision_supersedes_held_task(advertiser, reviewers):
     edited = advertiser.client.put(f"/api/v2/ads/{ad['adId']}", json={**ad_payload("supersede v2"), "expectedRevision": 1})
     assert edited.status_code == 200
 
+    # 作废发生在审核平台收到新 revision 的送审之时（outbox → MQ → worker），先等它可见。
     def superseded():
-        r = decide(reviewers["first"], task, "approve")
-        return r if r.status_code == 410 else None
-    assert_error(eventually(superseded, desc="old task superseded", timeout=60), 410, 7002)
+        r = reviewers["first"].client.get(f"/api/v2/review/tasks/{task['taskId']}")
+        return r.status_code == 200 and r.json()["task"]["status"] == "superseded"
+    eventually(superseded, desc="old task superseded", timeout=60)
+    assert_error(decide(reviewers["first"], task, "approve"), 410, 7002)
+    assert_error(reviewers["first"].client.post(f"/api/v2/review/tasks/{task['taskId']}/renew",
+                                                json={"leaseGeneration": task["leaseGeneration"]}), 410, 7002)
     try:
         status = mysql("xbh_review", f"SELECT status FROM review_task WHERE id = {int(task['taskId'])}").strip()
         assert status == "superseded"
