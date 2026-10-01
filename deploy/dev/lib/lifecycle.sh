@@ -83,15 +83,30 @@ app_up_steps() {
   wipe_legacy_assistant_redis || return $?
   prepare_etc || return $?
   start_log_maintainer || return $?
-  local row
+  local row name search_rpc_row=""
   for row in "${RPC_SERVICES[@]}"; do
+    IFS='|' read -r name _ <<<"$row"
+    if [[ "$name" == search-rpc ]]; then
+      search_rpc_row="$row"
+      continue
+    fi
     start_row "$row" || return $?
   done
   wait_port 127.0.0.1 9090 240 user-rpc || return $?
   wait_topics 180 || return $?
   for row in "${MQ_SERVICES[@]}"; do
     start_row "$row" || return $?
+    IFS='|' read -r name _ <<<"$row"
+    if [[ "$name" == search-mq && -n "$search_rpc_row" ]]; then
+      wait_search_index 120 || return $?
+      start_row "$search_rpc_row" || return $?
+      search_rpc_row=""
+    fi
   done
+  if [[ -n "$search_rpc_row" ]]; then
+    echo "search-rpc was not started: search-mq is missing from MQ_SERVICES" >&2
+    return 1
+  fi
   start_svc gateway "$BACKEND" ./app/gateway -f "$ETC_DIR/app/gateway/etc/gateway.yaml" || return $?
   frontend_up || return $?
   proxy_up || return $?

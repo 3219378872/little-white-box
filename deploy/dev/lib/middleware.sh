@@ -379,7 +379,7 @@ maybe_rebuild_search() {
   load_env || return $?
   local corpus_n es_n
   corpus_n="$(mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 4000 AND status = 1;" </dev/null | tr -d '[:space:]')" || return $?
-  es_n="$(search_doc_count "http://127.0.0.1:9200/xbh_posts/_count" | tr -d '[:space:]')"
+  es_n="$(search_doc_count "$SEARCH_INDEX_URL/_count" | tr -d '[:space:]')"
   if [[ -z "$corpus_n" || "$corpus_n" == "0" ]]; then
     echo "skip search rebuild: eval corpus not in mysql"
     return 0
@@ -393,6 +393,13 @@ maybe_rebuild_search() {
     cd "$BACKEND" || exit $?
     go run ./app/search/mq/cmd/rebuild -f "$ETC_DIR/app/search/mq/etc/search-consumer.yaml"
   )
+}
+
+# search-rpc panics at startup unless its index (or alias) already exists, and
+# only search-mq (EnsureIndex) or the rebuild tool creates it. On a fresh
+# Elasticsearch volume app-up must therefore wait for search-mq first.
+wait_search_index() {
+  wait_http "$SEARCH_INDEX_URL" "${1:-120}" search-index
 }
 
 middleware_up_locked() {

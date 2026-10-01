@@ -147,6 +147,7 @@ start_log_maintainer() {{ return 0; }}
 start_row() {{ return 0; }}
 wait_port() {{ return 0; }}
 wait_topics() {{ return 0; }}
+wait_search_index() {{ return 0; }}
 start_svc() {{ return 0; }}
 frontend_up() {{ return 0; }}
 proxy_up() {{ track_app_started_service proxy; }}
@@ -217,6 +218,75 @@ builtin printf 'status=%s\n' "$status"
                 "assistant-agent is not running after application startup",
                 result.stderr,
             )
+
+    def search_index_gate_script(self, events, lock, index_status):
+        return f"""
+export ROOT={shlex.quote(str(ROOT))}
+export TEST_EVENTS={shlex.quote(str(events))}
+export APP_LIFECYCLE_LOCK={shlex.quote(str(lock))}
+source {shlex.quote(str(STACK))}
+record() {{ builtin printf '%s\\n' "$1" >>"$TEST_EVENTS"; }}
+load_env() {{ :; }}
+ensure_assistant_db_env() {{ :; }}
+secure_runtime_paths() {{ :; }}
+clear_sensitive_assistant_logs() {{ :; }}
+wipe_legacy_assistant_redis() {{ :; }}
+prepare_etc() {{ :; }}
+start_log_maintainer() {{ :; }}
+start_row() {{ record "start:${{1%%|*}}"; }}
+wait_port() {{ :; }}
+wait_topics() {{ :; }}
+wait_search_index() {{ record wait_search_index; return {index_status}; }}
+wait_http() {{ :; }}
+start_svc() {{ :; }}
+frontend_up() {{ :; }}
+proxy_up() {{ :; }}
+maybe_rebuild_search() {{ :; }}
+validate_all_app_processes() {{ :; }}
+http_code() {{ builtin printf 200; }}
+stop_svc() {{ :; }}
+proxy_down() {{ :; }}
+stop_owned_port() {{ :; }}
+set +e
+app_up
+status=$?
+set -e
+builtin printf 'status=%s\\n' "$status"
+"""
+
+    def test_app_up_starts_search_rpc_only_after_search_index_exists(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            events = Path(tmp_dir) / "events"
+            script = self.search_index_gate_script(
+                events, Path(tmp_dir) / "app.lock", 0
+            )
+
+            result = run_bash(script)
+            recorded = events.read_text(encoding="utf-8").splitlines()
+
+            self.assertIn("status=0", result.stdout)
+            self.assertEqual(recorded.count("start:search-rpc"), 1)
+            search_mq = recorded.index("start:search-mq")
+            gate = recorded.index("wait_search_index")
+            search_rpc = recorded.index("start:search-rpc")
+            self.assertLess(search_mq, gate)
+            self.assertLess(gate, search_rpc)
+            self.assertLess(recorded.index("start:ad-rpc"), search_mq)
+
+    def test_app_up_does_not_start_search_rpc_without_search_index(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            events = Path(tmp_dir) / "events"
+            script = self.search_index_gate_script(
+                events, Path(tmp_dir) / "app.lock", 64
+            )
+
+            result = run_bash(script)
+            recorded = events.read_text(encoding="utf-8").splitlines()
+
+            self.assertIn("status=64", result.stdout)
+            self.assertIn("wait_search_index", recorded)
+            self.assertNotIn("start:search-rpc", recorded)
+            self.assertNotIn("start:feed-mq", recorded)
 
     def test_middleware_up_stops_at_first_locked_callback_failure(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

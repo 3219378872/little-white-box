@@ -78,6 +78,9 @@ URL 使用同一组值。自定义 `PROXY_CONF` 必须是包含 `@@ENTRY_PORT@@`
 - 测试账号 `admin` / `123456`；eval 语料 id 1001–1300 来自后端仓 `eval/corpus.json`，
   可选批量语料 id 2001–4000 来自后端仓 `eval/dev/corpus_2000.json`
   （`make gen-eval-posts` 重新生成）；搜索索引落后时 `app-up` 自动 rebuild。
+- 全新数据卷的启动顺序：`wait_topics` 以后端 `deploy/rocketmq/init-topics.sh` 的 `TOPICS` 为唯一清单；
+  search-rpc 启动时要求 ES 索引已存在，`app-up` 因此先启动 search-mq，等 `SEARCH_INDEX_URL`
+  （缺省 `http://127.0.0.1:9200/xbh_posts`）返回 200 后再启动 search-rpc。
 - e2e 会在 session 结束时软删除本轮经测试客户端创建且仍存在的帖子；平台没有测试用户删除接口，
   因此本轮注册的 `e2e<RUN_ID>*` 用户仍保留，必要时按明确 RUN_ID 单独治理。
   清理逐帖校验当前 revision；单项请求或解码失败会继续处理其余登记帖子，并在结束时汇总失败。
