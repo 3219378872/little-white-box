@@ -21,6 +21,7 @@ class RuntimePortsTest(unittest.TestCase):
 export ROOT={shlex.quote(str(ROOT))} BACKEND={shlex.quote(str(backend))}
 export ETC_DIR={shlex.quote(str(etc))}
 export ENTRY_PORT={entry} FRONT_PORT={front} GATEWAY_PORT={gateway}
+export PROXY_IPV6=1
 source {shlex.quote(str(STACK))}
 prepare_etc
 prepare_proxy_conf
@@ -38,6 +39,33 @@ prepare_proxy_conf
                 self.assertIn('$http_host', proxy)
                 self.assertEqual(config.read_text(), original)
                 self.assertEqual((etc / 'proxy.conf').stat().st_mode & 0o777, 0o600)
+
+    def test_proxy_drops_only_ipv6_listener_without_ipv6(self):
+        with tempfile.TemporaryDirectory() as td:
+            etc = Path(td) / 'etc'
+            run_bash(f'''
+export ROOT={shlex.quote(str(ROOT))} ETC_DIR={shlex.quote(str(etc))}
+export PROXY_IPV6=0
+source {shlex.quote(str(STACK))}
+prepare_proxy_conf
+''')
+            proxy = (etc / 'proxy.conf').read_text()
+            self.assertIn('listen 3002;', proxy)
+            self.assertNotIn('[::]', proxy)
+            self.assertIn('server 127.0.0.1:8888;', proxy)
+
+    def test_proxy_rejects_unknown_ipv6_mode_before_rendering(self):
+        with tempfile.TemporaryDirectory() as td:
+            etc = Path(td) / 'etc'
+            result = run_bash(f'''
+export ROOT={shlex.quote(str(ROOT))} ETC_DIR={shlex.quote(str(etc))}
+export PROXY_IPV6=yes
+source {shlex.quote(str(STACK))}
+prepare_proxy_conf
+''', check=False)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('PROXY_IPV6 must be auto, 1 or 0', result.stderr)
+            self.assertFalse((etc / 'proxy.conf').exists())
 
     def test_media_default_tracks_port_changed_after_stack_source(self):
         with tempfile.TemporaryDirectory() as td:

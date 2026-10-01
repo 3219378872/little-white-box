@@ -17,6 +17,8 @@ PROXY_NAME="${PROXY_NAME:-xbh-dev-proxy}"
 CANVASKIT_DIR="${CANVASKIT_DIR:-}"
 PROXY_CONF="${PROXY_CONF:-$ROOT/deploy/dev/proxy.conf}"
 PROXY_RUNTIME_CONF="${PROXY_RUNTIME_CONF:-$ETC_DIR/proxy.conf}"
+# auto drops the proxy's [::] listener on Linux hosts without an IPv6 stack.
+PROXY_IPV6="${PROXY_IPV6:-auto}"
 OVERRIDE="${OVERRIDE:-$ROOT/deploy/dev/middleware-override.yml}"
 COMPOSE_FILE="${COMPOSE_FILE:-$BACKEND/deploy/docker-compose.middleware.yml}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-deploy}"

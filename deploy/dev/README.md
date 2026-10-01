@@ -24,6 +24,8 @@
 `deploy/dev/proxy.conf` 模板渲染到 `$ETC_DIR/proxy.conf` 后挂载；前端监听、就绪检查与媒体默认公开
 URL 使用同一组值。自定义 `PROXY_CONF` 必须是包含 `@@ENTRY_PORT@@`、`@@FRONT_PORT@@`、
 `@@GATEWAY_PORT@@` 的模板；可用 `PROXY_RUNTIME_CONF` 覆盖生成副本路径，不改源模板。
+`PROXY_IPV6`（`auto`/`1`/`0`，缺省 `auto`）控制渲染副本是否保留 `listen [::]`；`auto` 仅在 Linux
+procfs 显示主机无 IPv6 协议栈时去掉它，否则 nginx 会因 `Address family not supported` 退出。
 
 ### 命令
 

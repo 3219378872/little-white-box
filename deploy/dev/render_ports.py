@@ -18,7 +18,7 @@ def render_gateway(text: str, port: int) -> str:
     return text[:section.start('body')] + body + text[section.end('body'):]
 
 
-def render_proxy(text: str, entry: int, front: int, gateway: int) -> str:
+def render_proxy(text: str, entry: int, front: int, gateway: int, ipv6: bool = True) -> str:
     for name, value in [('ENTRY_PORT', entry), ('FRONT_PORT', front), ('GATEWAY_PORT', gateway)]:
         token = '@@' + name + '@@'
         if token not in text:
@@ -26,6 +26,11 @@ def render_proxy(text: str, entry: int, front: int, gateway: int) -> str:
         text = text.replace(token, str(value))
     if re.search(r'@@[A-Z_]+@@', text):
         raise ValueError('unknown proxy template token')
+    if not ipv6:
+        # nginx exits on `listen [::]` when the host has no IPv6 stack.
+        text = re.sub(r'^[ \t]*listen[ \t]+\[::\]:[^\n]*\n', '', text, flags=re.MULTILINE)
+        if not re.search(r'^[ \t]*listen[ \t]+\S', text, re.MULTILINE):
+            raise ValueError('proxy template has no IPv4 listener')
     return text
 
 
@@ -37,6 +42,8 @@ def main():
     parser.add_argument('entry', type=int)
     parser.add_argument('front', type=int)
     parser.add_argument('gateway', type=int)
+    parser.add_argument('--no-ipv6', action='store_true',
+                        help='drop IPv6 proxy listeners for hosts without an IPv6 stack')
     args = parser.parse_args()
     if any(not 1 <= port <= 65535 for port in (args.entry, args.front, args.gateway)):
         parser.error('ports must be between 1 and 65535')
@@ -45,7 +52,8 @@ def main():
             raise ValueError('proxy runtime output must differ from its template')
         source = args.source.read_text()
         result = (render_gateway(source, args.gateway) if args.kind == 'gateway'
-                  else render_proxy(source, args.entry, args.front, args.gateway))
+                  else render_proxy(source, args.entry, args.front, args.gateway,
+                                    ipv6=not args.no_ipv6))
         args.destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix=args.destination.name + '.', dir=args.destination.parent)
         try:

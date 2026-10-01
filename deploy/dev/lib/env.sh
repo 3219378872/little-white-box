@@ -237,10 +237,36 @@ normalize_stack_ports() {
   done
 }
 
+proxy_ipv6_enabled() {
+  case "$PROXY_IPV6" in
+    1) return 0 ;;
+    0) return 1 ;;
+    auto)
+      # Only a Linux procfs can prove IPv6 is absent; keep it everywhere else.
+      if [[ -d /proc/net && ! -e /proc/net/if_inet6 ]]; then
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      echo "PROXY_IPV6 must be auto, 1 or 0" >&2
+      return 2
+      ;;
+  esac
+}
+
 prepare_proxy_conf() {
   normalize_stack_ports || return $?
+  local -a flags=()
+  local status=0
+  proxy_ipv6_enabled || status=$?
+  case "$status" in
+    0) ;;
+    1) flags+=(--no-ipv6) ;;
+    *) return "$status" ;;
+  esac
   python3 "$ROOT/deploy/dev/render_ports.py" proxy "$PROXY_CONF" "$PROXY_RUNTIME_CONF" \
-    "$ENTRY_PORT" "$FRONT_PORT" "$GATEWAY_PORT"
+    "$ENTRY_PORT" "$FRONT_PORT" "$GATEWAY_PORT" ${flags[@]+"${flags[@]}"}
 }
 
 prepare_etc() {
