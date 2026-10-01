@@ -1,9 +1,9 @@
-"""Black-box checks for the ad review platform and sponsored ads (W1～W4).
+"""Black-box checks for the ad review platform and sponsored ads (W1～W6).
 
 Covers SPEC-review-platform RVW-A01/A03/A05 and SPEC-sponsored-ads
-ADS-A01/A02/A04/A06/A08 against the real stack. Machine auto-pass and QA
-sampling need the embedding Router with seeds plus a non-stub Ranker, so they
-stay at the unit/integration level.
+ADS-A01/A02/A04/A06/A07/A08 plus reports and appeals (ADS-014/026/030) against
+the real stack. Machine auto-pass and QA sampling need the embedding Router
+with seeds plus a non-stub Ranker, so they stay at the unit/integration level.
 """
 import base64
 import socket
@@ -270,3 +270,114 @@ def test_ranker_fixture_auto_rejects(advertiser):
     ad = create_ad(advertiser, "ranker", body="Konten uji [[fixture:CONTENT.SELF_HARM=0.97]]")
     rejected = wait_ad(advertiser, ad["adId"], lambda a: a["reviewStatus"] == "rejected", desc="ranker auto reject")
     assert rejected["policyCodes"] == ["CONTENT.SELF_HARM"]
+
+
+def serving_ad(advertiser, reviewer, title, **overrides):
+    ad = create_ad(advertiser, title, **overrides)
+    approve_ad(reviewer, ad["adId"], 1)
+    return wait_ad(advertiser, ad["adId"], lambda a: a["eligible"], desc=f"{title} becomes eligible")
+
+
+def served_to_new_session(anon, ad_id, timeout=60):
+    return eventually(Viewer(anon, ad_id).fetch, desc="ad served to a fresh session", timeout=timeout, interval=1)
+
+
+# ADS-030 / ADS-026 / ADS-014 / RVW-024：举报对举报人隐藏并生成复审任务；举报成立下线；
+# 被下线的 revision 可申诉一次，复审由不同审核员作出且为最终结论。
+def test_report_takes_ad_offline_and_appeal_restores_it(anon, advertiser, reviewers):
+    first, second = reviewers["first"], reviewers["second"]
+    ad = serving_ad(advertiser, first, "reported kopi")
+    assert ad["appealable"] is False
+    served_to_new_session(anon, ad["adId"])
+
+    reporter = Viewer(anon, ad["adId"])
+    assert_error(anon.post(f"/api/v2/ads/{ad['adId']}/report", json={"sessionId": reporter.session, "reason": "boring"}),
+                 400, 2)
+    assert_error(anon.post(f"/api/v2/ads/{ad['adId']}/report", json={"reason": "scam"}), 400, 2)
+    r = anon.post(f"/api/v2/ads/{ad['adId']}/report", json={"sessionId": reporter.session, "reason": "scam"})
+    assert r.status_code == 200 and r.json()["counted"] is True, r.text[:200]
+    again = anon.post(f"/api/v2/ads/{ad['adId']}/report", json={"sessionId": reporter.session, "reason": "other"})
+    assert again.status_code == 200 and again.json()["counted"] is False
+    for _ in range(3):
+        assert reporter.fetch() is None, "reported ad must not be served to the reporter's session"
+    other = anon.post(f"/api/v2/ads/{ad['adId']}/report", json={"sessionId": key("sess"), "reason": "misleading"})
+    assert other.status_code == 200 and other.json()["counted"] is True
+
+    task = claim_matching(first, lambda t: t["objectId"] == ad["adId"] and t["purpose"] == "report", purpose="report")
+    assert task["objectRevision"] == 1
+
+    # 第二条举报经 outbox → MQ 异步送审，可能晚于领取到达；同批次只提高已有任务的优先级。
+    def raised():
+        r = first.client.get(f"/api/v2/review/tasks/{task['taskId']}")
+        return r.status_code == 200 and r.json()["task"]["priority"] >= 60
+    eventually(raised, desc="second report raises the task priority", timeout=60)
+    assert decide(first, task, "reject", ["CONTENT.DECEPTIVE"]).status_code == 200
+    offline = wait_ad(advertiser, ad["adId"], lambda a: a["servingStatus"] == "offline", desc="report upheld")
+    assert offline["pauseReason"] == "report" and offline["policyCodes"] == ["CONTENT.DECEPTIVE"]
+    assert offline["appealable"] is True and not offline["eligible"]
+
+    appealed = advertiser.client.post(f"/api/v2/ads/{ad['adId']}/appeal", json={"idempotencyKey": key("appeal")})
+    assert appealed.status_code == 200, appealed.text[:200]
+    assert appealed.json()["ad"]["reviewStatus"] == "appealing"
+    assert_error(advertiser.client.post(f"/api/v2/ads/{ad['adId']}/appeal", json={}), 409, 7106)
+
+    # 原决策人看不到这条申诉。
+    held = first.client.post("/api/v2/review/tasks/claim", json={"purpose": "appeal"}).json()
+    if held.get("found"):
+        assert held["task"]["objectId"] != ad["adId"], "appeal must exclude the original decider"
+        first.client.post(f"/api/v2/review/tasks/{held['task']['taskId']}/release",
+                          json={"leaseGeneration": held["task"]["leaseGeneration"]})
+    appeal = claim_matching(second, lambda t: t["objectId"] == ad["adId"] and t["purpose"] == "appeal",
+                            purpose="appeal")
+    assert appeal["originalDecision"]["verdict"] == "reject"
+    assert decide(second, appeal, "approve").status_code == 200
+    restored = wait_ad(advertiser, ad["adId"], lambda a: a["servingStatus"] == "serving", desc="appeal approved")
+    assert restored["reviewStatus"] == "approved" and restored["appealable"] is False
+    assert_error(advertiser.client.post(f"/api/v2/ads/{ad['adId']}/appeal", json={}), 409, 7106)
+    served_to_new_session(anon, ad["adId"], timeout=90)
+
+
+# ADS-031 / ADS-A07：生效种子库变化后在投广告按新代次回扫；判定违规先暂停（停止投放）并进入人审，
+# 人审确认后下线，否定后恢复投放。需要精排占位 sidecar（`just infer-up`，fixture 标记驱动分数）。
+def test_rescan_pauses_violations_until_human_review(anon, advertiser, reviewers):
+    if not _port_open(9026):
+        pytest.skip("moderation-infer is not running; start it with `just infer-up`")
+    first, second, admin = reviewers["first"], reviewers["second"], reviewers["admin"]
+    body = "Kopi hemat [[fixture:CONTENT.DECEPTIVE=0.97]]"
+    run = key("rescan")
+
+    # 先确认种子：代次在确认后 60 秒生效，此前过审的广告都会回扫。标题各不相同，避免指纹复用直接结案；
+    # 召回可用时文案相近仍命中种子，不可用时全部 issue 进入精排。
+    seed_ad = create_ad(advertiser, f"{run} seed", body=body)
+    seed_task = claim_matching(first, lambda t: t["objectId"] == seed_ad["adId"])
+    assert decide(first, seed_task, "reject", ["CONTENT.DECEPTIVE"], nominateSeed=True).status_code == 200
+    seeds = admin.client.get("/api/v2/review/seeds", params={"status": "candidate", "limit": 200}).json()["seeds"]
+    seed = next(s for s in seeds if s["sourceTaskId"] == seed_task["taskId"])
+    assert admin.client.post(f"/api/v2/review/seeds/{seed['seedId']}/confirm").status_code == 200
+    try:
+        # 初审：DECEPTIVE 0.97 在 ID 市场不允许自动拒绝，落入灰区由人工通过。
+        confirmed = serving_ad(advertiser, first, f"{run} a", body=body)
+        cleared = serving_ad(advertiser, first, f"{run} b", body=body)
+        for ad in (confirmed, cleared):
+            paused = wait_ad(advertiser, ad["adId"], lambda a: a["servingStatus"] == "paused",
+                             desc="rescan violation pauses serving", timeout=240)
+            assert paused["pauseReason"] == "rescan" and "CONTENT.DECEPTIVE" in paused["policyCodes"]
+            assert not paused["eligible"]
+        watcher = Viewer(anon, confirmed["adId"])
+        for _ in range(3):
+            assert watcher.fetch() is None, "paused ad must not be served"
+
+        ids = {confirmed["adId"]: ("reject", ["CONTENT.DECEPTIVE"]), cleared["adId"]: ("approve", None)}
+        while ids:
+            task = claim_matching(second, lambda t: t["purpose"] == "rescan" and t["objectId"] in ids, purpose="rescan")
+            assert task["escalationReason"] == "rescan-violation"
+            verdict, codes = ids.pop(task["objectId"])
+            assert decide(second, task, verdict, codes).status_code == 200
+        offline = wait_ad(advertiser, confirmed["adId"], lambda a: a["servingStatus"] == "offline",
+                          desc="rescan violation confirmed")
+        assert offline["pauseReason"] == "rescan" and offline["appealable"] is True
+        wait_ad(advertiser, cleared["adId"], lambda a: a["servingStatus"] == "serving" and a["eligible"],
+                desc="rescan violation dismissed")
+        served_to_new_session(anon, cleared["adId"], timeout=90)
+    finally:
+        admin.client.post(f"/api/v2/review/seeds/{seed['seedId']}/retire")

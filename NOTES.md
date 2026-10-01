@@ -2,6 +2,19 @@
 
 工作区根目录备忘，不是任一子仓正式知识链的一部分。事实以当时代码、配置和现场命令为准。
 
+## 2026-10-01 广告 W6（举报、申诉、回扫）联调
+
+- `just e2e deploy/dev/e2e/test_ads_review.py` 在本地栈 10 passed（含举报下线→申诉恢复、回扫暂停→人审
+  下线/恢复）；连同 `test_review_regressions.py`、`test_feed.py` 共 24 passed。
+- 回扫由「生效种子变化 / 政策版本」触发：同一轮 e2e 里前面用例确认或停用种子也会让在投 e2e 广告被回扫，
+  无 fixture 标记的广告落入灰区成为 `rescan` 人审任务，`claim_matching` 会把它们当遗留任务关掉（下线）。
+  回扫用例因此先确认自己的种子再建广告，标题各不相同以免指纹复用直接结案。
+- 举报优先级随批次举报数提高，第二条举报经 outbox → MQ 异步送审，可能晚于领取；断言要等任务优先级更新。
+- 现场处理（未入库）：ES 在磁盘配额下判超高水位，`cluster.routing.allocation.disk.threshold_enabled=false`；
+  dockerd `registry-mirrors` 指向 `mirror.gcr.io` 规避 Docker Hub 限流；容器内 pip 访问不到 PyPI 导致
+  `just infer-up` 构建 embedding 镜像失败，改在宿主机以 `MODERATION_FIXTURE_ENABLED=1` 直接运行
+  `python -m algorithm.moderation_infer.server`（监听 127.0.0.1:9026）。
+
 ## 2026-10-01 云端全新环境联调
 
 - 首次在全新数据卷上起栈（4 核 / 15 GiB / 无 swap / 无 IPv6 / 无 `ss` 的 KVM 容器），暴露的问题都被
