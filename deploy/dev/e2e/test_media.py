@@ -50,11 +50,9 @@ def test_upload_rejects_oversize(user):
 
 
 @pytest.mark.parametrize("filename,content_type,magic", [
-    # A JPEG header passes type detection, then the dimension decode fails and
-    # media-rpc maps it to MediaProcessFailed (HTTP 500 / 4006). Strict xfail
-    # turns into a failure once the backend answers 400, so drop it then.
-    pytest.param("broken.jpg", "image/jpeg", b"\xff\xd8\xff\xe0",
-                 marks=pytest.mark.xfail(strict=True, reason="backend answers 500 for undecodable JPEG")),
+    # The JPEG header passes type sniffing and only fails at decode; it must
+    # still be a client error, not a media processing fault.
+    ("broken.jpg", "image/jpeg", b"\xff\xd8\xff\xe0"),
     ("broken.webp", "image/webp", b"RIFF"),
 ])
 def test_upload_malformed_image_payload_rejected(user, filename, content_type,
