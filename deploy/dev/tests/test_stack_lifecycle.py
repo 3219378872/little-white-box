@@ -553,6 +553,33 @@ builtin printf 'status=%s\n' "$status"
 
             self.assertIn("status=44", result.stdout)
 
+    def test_status_reports_all_three_algorithm_services(self):
+        stack = stack_source()
+        status_fn = re.search(
+            r"^stack_status_locked\(\) \{\n(?:.*\n)*?^\}\n",
+            stack,
+            re.M,
+        )
+        self.assertIsNotNone(status_fn)
+        body = status_fn.group(0)
+        self.assertIn("embedding-service online-infer moderation-infer", body)
+        for port in ("50051", "9025", "9026"):
+            self.assertIn(f"algorithm_port_state {port}", body)
+
+    def test_start_row_keeps_row_fields_local(self):
+        script = f"""
+export ROOT={shlex.quote(str(ROOT))}
+source {shlex.quote(str(STACK))}
+start_svc() {{ builtin printf 'started=%s|%s|%s|%s|%s\n' "$@"; }}
+name=caller workdir=caller-dir
+start_row "svc|/w|./bin|-f|/c.yaml"
+builtin printf 'name=%s workdir=%s\n' "$name" "$workdir"
+"""
+        result = run_bash(script)
+
+        self.assertIn("started=svc|/w|./bin|-f|/c.yaml", result.stdout)
+        self.assertIn("name=caller workdir=caller-dir", result.stdout)
+
     def test_stack_down_stops_algorithm_before_middleware(self):
         stack = stack_source()
         down_fn = re.search(

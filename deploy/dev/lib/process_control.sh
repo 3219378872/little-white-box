@@ -414,7 +414,7 @@ start_log_maintainer() {
 }
 
 start_row() {
-  local row="$1"
+  local row="$1" name workdir bin flag conf
   IFS='|' read -r name workdir bin flag conf <<<"$row"
   start_svc "$name" "$workdir" "$bin" "$flag" "$conf"
 }

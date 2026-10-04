@@ -218,6 +218,9 @@ rotate_dev_db_credentials_locked() {
   mv -f "$tmp" "$file" || return $?
   chmod 600 "$file" || return $?
   echo "rotated local app/e2e MySQL credentials in $file"
+  # MySQL still holds the old passwords until middleware-up reseeds them; an
+  # app-up before that would start every service with rejected credentials.
+  echo "next: run 'just up' (app-down, middleware-up, app-up) to apply them"
 }
 
 rotate_dev_db_credentials() {

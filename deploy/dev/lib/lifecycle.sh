@@ -257,7 +257,7 @@ stack_status_locked() {
   echo "== algorithm =="
   COMPOSE_PROFILES=algorithm compose ps \
     --format 'table {{.Name}}\t{{.Service}}\t{{.Status}}' \
-    embedding-service online-infer || true
+    embedding-service online-infer moderation-infer || true
   echo
   echo "== app pids =="
   local name
@@ -275,6 +275,7 @@ stack_status_locked() {
     "$(http_code "http://127.0.0.1:$ASSISTANT_AGENT_METRICS_PORT/metrics")"
   printf ':50051 embed %s\n' "$(algorithm_port_state 50051)"
   printf ':9025 infer  %s\n' "$(algorithm_port_state 9025)"
+  printf ':9026 modinf %s\n' "$(algorithm_port_state 9026)"
 }
 
 stack_status() {

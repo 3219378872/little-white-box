@@ -164,7 +164,8 @@ source {shlex.quote(str(STACK))}
 rotate_dev_db_credentials
 load_env
 """
-            run_bash(script)
+            result = run_bash(script)
+            self.assertIn("next: run 'just up'", result.stdout)
             rotated = env_path.read_text()
             self.assertIn("ASSISTANT_LLM_API_KEY='provider-test-value'", rotated)
             self.assertEqual(rotated.count("APP_MYSQL_PASSWORD="), 1)
