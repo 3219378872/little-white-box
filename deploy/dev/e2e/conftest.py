@@ -4,7 +4,7 @@ import pytest
 
 from api_client import ApiClient, cleanup_created_posts
 from support import (ADMIN_PASSWORD, ADMIN_USERNAME, BASE_URL, DEFAULT_PASSWORD,
-                     RUN_ID, User)
+                     User)
 
 
 @pytest.fixture(scope="session")

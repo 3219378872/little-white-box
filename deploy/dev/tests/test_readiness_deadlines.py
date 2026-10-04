@@ -18,7 +18,8 @@ spec.loader.exec_module(ready)
 class ReadinessDeadlinesTest(unittest.TestCase):
     def test_stalled_http_respects_total_budget_and_default_label(self):
         with socket.socket() as listener:
-            listener.bind(('127.0.0.1', 0)); listener.listen()
+            listener.bind(('127.0.0.1', 0))
+            listener.listen()
             listener.settimeout(3)
             release = threading.Event()
             def stall():
@@ -32,7 +33,8 @@ class ReadinessDeadlinesTest(unittest.TestCase):
                 result = run_bash(f'source {shlex.quote(str(STACK))}; wait_http http://127.0.0.1:{listener.getsockname()[1]}/ 0.3', check=False)
             finally:
                 elapsed = time.monotonic() - started
-                release.set(); thread.join()
+                release.set()
+                thread.join()
             self.assertEqual(result.returncode, 1)
             self.assertLess(elapsed, .8)
             self.assertIn('timeout waiting for http://', result.stderr)
@@ -64,7 +66,8 @@ class ReadinessDeadlinesTest(unittest.TestCase):
             now[0] += .8
             return False
         def sleep(seconds):
-            sleeps.append(seconds); now[0] += seconds
+            sleeps.append(seconds)
+            now[0] += seconds
         self.assertFalse(ready.wait(probe, 1, clock=lambda: now[0], sleep=sleep))
         self.assertEqual(len(sleeps), 1)
         self.assertAlmostEqual(sleeps[0], .2)

@@ -18,7 +18,7 @@ from unittest import mock
 
 
 sys.dont_write_bytecode = True
-from deploy.dev import workspace_checks
+from deploy.dev import workspace_checks  # noqa: E402 - must follow the bytecode switch
 
 
 BACKEND = workspace_checks.BACKEND_REPOSITORY

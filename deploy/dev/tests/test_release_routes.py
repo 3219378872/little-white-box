@@ -36,7 +36,9 @@ class ReleaseRoutesTest(unittest.TestCase):
                         urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}{path}')
                     self.assertEqual(error.exception.code, 404)
             finally:
-                server.shutdown(); server.server_close(); thread.join()
+                server.shutdown()
+                server.server_close()
+                thread.join()
 
 
 if __name__ == '__main__':

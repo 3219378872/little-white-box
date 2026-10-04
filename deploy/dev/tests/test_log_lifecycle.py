@@ -1,5 +1,4 @@
 """Deterministic synthetic-only regression tests for log cleanup boundaries."""
-import gzip
 import importlib.util
 from pathlib import Path
 import shlex
@@ -84,7 +83,8 @@ class LogLifecycleTest(unittest.TestCase):
                 process.wait(timeout=3)
             finally:
                 if process.poll() is None:
-                    process.kill(); process.wait()
+                    process.kill()
+                    process.wait()
             self.assertTrue(list(directory.glob('*.tmp')))
             unrelated = directory / 'gateway.log.1.gz.owned.tmp'
             unrelated.write_text('SYNTHETIC_OTHER_SERVICE')

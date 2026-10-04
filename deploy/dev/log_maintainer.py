@@ -64,13 +64,13 @@ def rotate(log_path: Path, max_bytes: int) -> bool:
 
 def _rotate_locked(log_path: Path, max_bytes: int) -> bool:
     try:
-        stat = log_path.stat(follow_symlinks=False)
+        info = log_path.stat(follow_symlinks=False)
     except FileNotFoundError:
         return False
     if not log_path.is_file() or log_path.is_symlink():
         return False
     os.chmod(log_path, 0o600)
-    if stat.st_size <= max_bytes:
+    if info.st_size <= max_bytes:
         return False
 
     backup = log_path.with_suffix(log_path.suffix + ".1.gz")
@@ -85,6 +85,9 @@ def _rotate_locked(log_path: Path, max_bytes: int) -> bool:
         os.chmod(temp_name, 0o600)
         os.replace(temp_name, backup)
         os.chmod(backup, 0o600)
+        # Copy-truncate: lines appended between the copy and this truncate
+        # are dropped. Services keep their fds open, so this dev-only loss
+        # window is accepted over restarting writers on rotation.
         with log_path.open("r+b") as current:
             current.truncate(0)
         return True

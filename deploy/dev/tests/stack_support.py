@@ -2,15 +2,9 @@ import os
 from pathlib import Path
 import re
 import signal
-import shlex
-import shutil
 import socket
-import stat
 import subprocess
-import sys
-import tempfile
 import time
-import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]

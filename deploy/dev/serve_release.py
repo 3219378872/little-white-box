@@ -6,8 +6,9 @@ Serves the release bundle on 127.0.0.1:<port> with:
   requires it),
 - SPA fallback: unknown paths without a dot serve index.html so deep links
   like /post/<id> survive a hard refresh,
-- no caching of index.html / flutter_bootstrap.js (hashed assets get long
-  cache), keeping refreshes consistent across rebuilds.
+- no-cache for the entry path, .html/.js/.json and SPA fallbacks; Flutter
+  build names are not content-hashed, so other assets (wasm, fonts, images,
+  CanvasKit) get a short one-hour cache rather than an immutable one.
 
 Usage: serve_release.py <port> <build_dir>
 """
@@ -33,7 +34,6 @@ class ReleaseHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         path = self.translate_path(self.path)
         rel = os.path.relpath(path, self.directory)
-        top = rel.split(os.sep)[0] if os.sep in rel or "." in rel else rel
         request_path = self.path.split("?", 1)[0]
         if (
             request_path in {"", "/"}
@@ -41,8 +41,6 @@ class ReleaseHandler(http.server.SimpleHTTPRequestHandler):
             or not os.path.exists(path)
         ):
             self.send_header("Cache-Control", "no-cache")
-        elif top == "canvaskit":
-            self.send_header("Cache-Control", "max-age=3600")
         else:
             self.send_header("Cache-Control", "max-age=3600")
         super().end_headers()
