@@ -5,6 +5,7 @@ ad carries an "E2E" prefix, and ads expire after two hours so the serving
 index does not accumulate across runs. Reviewer roles are granted through the
 same ops path as humans use (backend rolectl, RVW-050).
 """
+import atexit
 import os
 import subprocess
 import tempfile
@@ -29,8 +30,11 @@ def rolectl(*args):
         if not os.environ.get("DB_REVIEW"):
             pytest.skip("DB_REVIEW is not loaded; run through `just e2e`")
         binary = Path(tempfile.gettempdir()) / f"xbh-e2e-rolectl-{os.getpid()}"
-        subprocess.run(["go", "build", "-o", str(binary), "./app/review/rolectl"], cwd=BACKEND, check=True,
-                       capture_output=True, timeout=300)
+        # The ~15MB build is per run; remove it at exit instead of leaving it in /tmp.
+        atexit.register(binary.unlink, missing_ok=True)
+        build = subprocess.run(["go", "build", "-o", str(binary), "./app/review/rolectl"], cwd=BACKEND,
+                               capture_output=True, text=True, timeout=300)
+        assert build.returncode == 0, f"rolectl build failed in {BACKEND}: {build.stderr[-300:]}"
         _ROLECTL = binary
     result = subprocess.run([str(_ROLECTL), *args], capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, f"rolectl {args[0]} failed: {result.stderr[-300:]}"

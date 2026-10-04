@@ -35,7 +35,9 @@ def reviewers(make_user):
     grant(first, "reviewer,qa")
     grant(second, "reviewer,qa")
     grant(admin, "policy_admin,reviewer")
-    return {"qual": qual, "first": first, "second": second, "admin": admin}
+    yield {"qual": qual, "first": first, "second": second, "admin": admin}
+    for user in (qual, first, second, admin):
+        revoke(user)
 
 
 @pytest.fixture(scope="module")
@@ -240,8 +242,12 @@ def test_lease_fencing_between_reviewers(advertiser, reviewers):
     seed = next(s for s in seeds.json()["seeds"] if s["sourceTaskId"] == task["taskId"])
     assert_error(second.client.post(f"/api/v2/review/seeds/{seed['seedId']}/confirm"), 403, 7003)
     confirmed = admin.client.post(f"/api/v2/review/seeds/{seed['seedId']}/confirm")
-    assert confirmed.status_code == 200 and confirmed.json()["seed"]["status"] == "active"
-    assert admin.client.post(f"/api/v2/review/seeds/{seed['seedId']}/retire").json()["seed"]["status"] == "retired"
+    try:
+        assert confirmed.status_code == 200 and confirmed.json()["seed"]["status"] == "active"
+    finally:
+        # An active seed left behind would rescan and pause later runs' ads.
+        retired = admin.client.post(f"/api/v2/review/seeds/{seed['seedId']}/retire")
+    assert retired.json()["seed"]["status"] == "retired"
 
 
 # RVW-A05 / RVW-050：撤销角色对下一次请求立即生效；非审核员看不到工作台。
@@ -250,10 +256,12 @@ def test_role_revocation_is_immediate(make_user):
     assert reviewer.client.get("/api/v2/review/me").json()["active"] is False
     assert_error(reviewer.client.post("/api/v2/review/tasks/claim", json={}), 403, 7003)
     grant(reviewer, "reviewer")
-    profile = reviewer.client.get("/api/v2/review/me").json()
-    assert profile["active"] and profile["markets"] == [MARKET]
-    assert reviewer.client.post("/api/v2/review/tasks/claim", json={}).status_code == 200
-    revoke(reviewer)
+    try:
+        profile = reviewer.client.get("/api/v2/review/me").json()
+        assert profile["active"] and profile["markets"] == [MARKET]
+        assert reviewer.client.post("/api/v2/review/tasks/claim", json={}).status_code == 200
+    finally:
+        revoke(reviewer)
     assert_error(reviewer.client.post("/api/v2/review/tasks/claim", json={}), 403, 7003)
 
 

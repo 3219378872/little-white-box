@@ -1,6 +1,6 @@
 import pytest
 
-from api_client import assert_error
+from api_client import assert_error, error_of
 from support import unique_marker
 
 
@@ -50,12 +50,18 @@ def test_upload_rejects_oversize(user):
 
 
 @pytest.mark.parametrize("filename,content_type,magic", [
-    ("broken.jpg", "image/jpeg", b"\xff\xd8\xff\xe0"),
+    # A JPEG header passes type detection, then the dimension decode fails and
+    # media-rpc maps it to MediaProcessFailed (HTTP 500 / 4006). Strict xfail
+    # turns into a failure once the backend answers 400, so drop it then.
+    pytest.param("broken.jpg", "image/jpeg", b"\xff\xd8\xff\xe0",
+                 marks=pytest.mark.xfail(strict=True, reason="backend answers 500 for undecodable JPEG")),
     ("broken.webp", "image/webp", b"RIFF"),
 ])
 def test_upload_malformed_image_payload_rejected(user, filename, content_type,
                                                  magic):
     payload = magic + b"\x00" * 256
     r = user.client.upload_image((filename, payload, content_type))
-    assert r.status_code >= 400, \
-        f"malformed {content_type} payload should be rejected, got {r.status_code}"
+    # Client-side garbage must be a 4xx with an error envelope, never a 5xx.
+    assert r.status_code == 400, \
+        f"malformed {content_type} payload should be a 400, got {r.status_code}: {r.text[:200]}"
+    assert error_of(r) is not None, r.text[:200]

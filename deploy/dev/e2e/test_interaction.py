@@ -131,5 +131,4 @@ def test_interaction_requires_auth(anon):
 
 def test_cannot_like_missing_target(user):
     fake_id = 10 ** 14
-    r = user.client.like(fake_id, 1)
-    assert r.status_code >= 400, f"liking nonexistent target succeeded: {r.text[:200]}"
+    assert_error(user.client.like(fake_id, 1), 404, 2001)

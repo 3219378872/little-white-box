@@ -48,9 +48,13 @@ def test_conversation_visible_both_sides_with_unread(make_user):
     assert own["lastMessage"] == content
 
     receiver_side = eventually(
-        lambda: (c := _conversation_with(b.client, a.id)) and c["unreadCount"] >= 1,
+        lambda: (c := _conversation_with(b.client, a.id)) and c["unreadCount"] >= 1 and c,
         desc="receiver conversation shows unread", timeout=60)
-    assert receiver_side
+    for client, convo in ((a.client, own), (b.client, receiver_side)):
+        resp = client.conversation_messages(convo["id"])
+        assert resp.status_code == 200, resp.text[:200]
+        row = next((m for m in resp.json()["messages"] if m["id"] == message_id), None)
+        assert row is not None and row["content"] == content, resp.text[:200]
 
 
 def test_receiver_marks_read_clears_unread(make_user):

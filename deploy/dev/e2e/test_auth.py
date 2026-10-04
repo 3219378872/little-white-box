@@ -57,9 +57,7 @@ def test_refresh_rotates_token_pair(anon, make_user):
 def test_refresh_rejects_access_token(make_user, anon):
     u = make_user()
     r = anon.refresh(u.client.token)
-    assert r.status_code >= 400, f"access token accepted as refresh: {r.text[:200]}"
-    err = r.json()
-    assert "code" in err
+    assert_error(r, 401, 1006)
 
 
 def test_verify_code_accepted(anon):

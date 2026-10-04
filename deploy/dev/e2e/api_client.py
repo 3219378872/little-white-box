@@ -37,12 +37,23 @@ def cleanup_created_posts():
     return failures
 
 
-def parse_sse_stream(resp, max_frames=1000, stop_types=None):
+# The gateway writes a heartbeat every 25s, so a socket read timeout never
+# fires on a stalled run; the stream is bounded by this wall-clock budget.
+SSE_TOTAL_TIMEOUT_SECONDS = 600
+
+
+def parse_sse_stream(resp, max_frames=1000, stop_types=None,
+                     timeout=SSE_TOTAL_TIMEOUT_SECONDS):
     stop_types = {"done", "error"} if stop_types is None else set(stop_types)
+    deadline = time.monotonic() + timeout
     frames = []
     buf = b""
     done = False
     for chunk in resp.iter_content(chunk_size=None):
+        if time.monotonic() > deadline:
+            raise AssertionError(
+                f"SSE stream not finished within {timeout:.0f}s; "
+                f"last frames: {frames[-3:]}")
         if not chunk:
             continue
         if isinstance(chunk, str):
@@ -293,7 +304,7 @@ class ApiClient:
             headers["Last-Event-ID"] = str(last_event_id)
         return self.get(f"/api/v2/assistant/runs/{run_id}/events",
                         params=params or None, headers=headers, stream=stream,
-                        timeout=(5, 600))
+                        timeout=(5, 90))
 
     def cancel_assistant_run(self, run_id):
         return self.post(f"/api/v2/assistant/runs/{run_id}/cancel")
