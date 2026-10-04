@@ -1,7 +1,8 @@
 # 小白盒
 
 小白盒是一个以内容为中心的社区项目：用户可以创作、讨论和收藏帖子，通过关注流、搜索与推荐发现
-内容，也可以在消息页使用小白盒 Agent 澄清复杂需求、检索资料并获得带来源的综合回答。
+内容，也可以在消息页使用小白盒 Agent 澄清复杂需求、检索资料并获得带来源的综合回答。推荐流中
+可出现先审后投、带标识的广告，广告主与审核人员各有独立的控制台和工作台。
 
 本仓库 `little-white-box` 是前后端的联调编排入口，管理本地开发栈、跨仓检查、黑盒测试及两个子仓的
 固定版本。业务代码分别维护在独立的 Go 后端与 Flutter 前端仓库中。
@@ -35,9 +36,12 @@
 | 社区创作与互动 | 帖子草稿与发布、媒体、评论、点赞、收藏、公开资料、关注关系及一对一私信 |
 | 内容发现 | 独立的关注流、帖子/用户/标签搜索、个性化与冷启动推荐 |
 | 社区助手 | 消息页固定 Agent 线程、结构化澄清、社区优先检索、授权后的互联网补充、来源引用、个人记忆与 Watch 条件追踪 |
+| 广告与审核 | 广告主资质、推荐流广告槽位与频控、隐藏与举报、申诉与投后回扫；机审级联加领取制人审、质检与审计 |
 
 内容社区是产品主体，普通搜索、推荐与社区操作不以使用 Agent 为前提。Agent 是帮助用户使用社区的
 工具，不是独立通用陪伴产品；使用前需要授权，资料不足、外部服务故障与结论限制应明确呈现。
+广告是商业化补充：只有过审版本才会投放，广告服务故障时推荐流降级为不含广告。审核平台首批只接入
+广告主资质与广告素材；政策码与阈值是演示配置，机审精排是占位实现，不提供竞价、计费与结算。
 
 ## 仓库与架构
 
@@ -59,6 +63,7 @@ flowchart LR
 ```
 
 `:3002` 同时提供页面、API 与媒体入口；`:3003` 默认承载 release 静态包，不是 API 反向代理。
+媒体入口只匿名读取公开桶 `xbh-media`，广告私有素材桶 `xbh-ad-private` 不对外开放。
 根仓只记录子仓 gitlink，不接管子仓源文件。公开 REST 和 Flutter SDK 的生成源是后端
 `app/gateway/openapi.yaml`；后端 `.proto` 只定义内部 RPC。两份 Dart SDK 的同步由前端仓工具完成。
 
@@ -102,7 +107,8 @@ Mock 只用于客户端开发，不证明真实 API、模型或推荐效果可�
 | 版本 | Go 以后端 `go.mod` 为准；Flutter/Dart 以客户端依赖声明和锁文件为准 |
 | Docker | 可访问 Docker daemon，Docker Compose ≥ 2.24；本地覆盖使用 `ports: !override` |
 | 配置与凭据 | 已准备匹配当前服务配置的数据库、缓存、鉴权和外部服务环境变量 |
-| 网络与端口 | 能获取依赖及容器镜像，默认联调端口无冲突 |
+| 网络与端口 | 能获取依赖及容器镜像；入口、前端与 Gateway 端口冲突时可用 `ENTRY_PORT`、`FRONT_PORT`、`GATEWAY_PORT` 覆盖，其余默认端口须空闲 |
+| 资源 | 曾在 4 核、15 GiB 内存、无 swap、无 IPv6 的全新环境跑通全量栈，这不是最低要求；无 IPv6 由 `PROXY_IPV6=auto` 自动处理 |
 
 本地环境文件放在 `/tmp/xbh-dev.env` 或 `deploy/dev/.env`，前者优先；加载时收紧为 `0600`，均不得
 入库。凭据通过安全渠道单独配置，不从 README、历史日志或生产示例复制真实密钥。
@@ -114,12 +120,15 @@ just up
 just status
 ```
 
-访问 `http://127.0.0.1:3002`。`just up` 会先停止已有应用，再重放数据库补丁、准备测试数据并启动
+访问 `http://127.0.0.1:3002`，可用测试账号 `admin` / `123456` 登录。`just up` 会先停止已有应用，再重放数据库补丁、准备测试数据并启动
 当前源码版本的服务；它会改变本地运行状态与数据，不是只读检查。就绪检查也受已配置外部服务影响。
 不要把该开发栈直接用于生产环境。
 
-可选 embedding 与在线推理链路需显式 `just infer-up`，首次启动可能下载模型权重。
-`just up` 不启动也不停止该链路；未启动时推荐可走规则降级。
+可选 embedding、在线推理与审核精排占位链路需显式 `just infer-up`，首次启动可能下载模型权重。
+`just up` 不启动也不停止该链路；未启动时推荐走规则降级，审核机审会把候选全部转人工审核。
+
+审核工作台需要审核角色。角色没有在线授予接口，只能用
+`just review-role grant <userId> <roles> [markets] [languages]` 授予，并写入审计记录。
 
 ## 常用命令
 
@@ -128,17 +137,23 @@ just status
 | 命令 | 用途与边界 |
 | --- | --- |
 | `just up` / `just down` | 启动或停止本地栈；`down` 同时停止可选算法容器，保留数据卷 |
+| `just restart` | 重启应用与默认中间件，已运行的算法容器保持不动 |
 | `just status` | 查看容器、进程、就绪标记和关键端口，不等同于端到端业务验收 |
 | `just app-up` / `just app-down` | 只控制本机应用与反代，分步使用前先确认配置和中间件状态 |
-| `just infer-up` / `just infer-down` | 控制可选算法服务 |
+| `just middleware-up` / `just middleware-down` | 只控制 Docker 中间件，`middleware-up` 会重放数据库补丁 |
+| `just infer-up` / `just infer-down` | 控制可选算法服务（embedding、在线推理、审核精排占位） |
+| `just review-role grant …` / `revoke <userId>` | 授予或撤销审核角色，这是唯一授权路径 |
+| `just seed` | 写入测试账号与 eval 语料，可重复执行 |
+| `just rotate-db-credentials` | 原子轮换本地 app/e2e MySQL 凭据，不输出新值 |
 | `just knowledge-setup` | 为三仓安装隔离的知识工具依赖，首次知识/契约检查前执行 |
 | `just test-dev` | 统一发现 `deploy/dev/tests/` 编排单测，不连接真实栈 |
 | `just knowledge-check` | 只读核对 gitlink、跨仓知识引用与两端知识门禁 |
 | `just contract-check` | 在临时 clone 中检查后端生成漂移，并核对前端两份 SDK；需备齐生成工具 |
 | `just e2e deploy/dev/e2e/test_health.py` | 对已运行的真实栈执行所选健康测试；`just e2e` 才运行全套 |
+| `just e2e-agent-research` / `just e2e-agent-reset` | 用确定性 Agent fixture 跑研究流程与截断重试门禁，结束后恢复原 provider |
 
 黑盒测试需要其 [Python 依赖](deploy/dev/e2e/requirements.txt)和本地配置。全套测试可能创建测试数据、
-调用已配置的外部服务；确定性 Agent fixture 有独立入口与恢复逻辑，不应当作只读文档检查运行。
+调用已配置的外部服务；`e2e-agent-*` 会临时切换 Agent provider，均不应当作只读检查运行。
 日志、测试账号、迁移和更完整的操作说明见 [本地联调](deploy/dev/README.md)。
 
 ## 开发与文档
