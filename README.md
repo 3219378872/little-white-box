@@ -13,11 +13,11 @@
 
 以下为 2026-10-04 在当前界面上重新拍摄的浏览器截图。Mock 使用演示数据，真实联调图来自本地测试栈；
 均不是生产数据或当前版本的完整验收结论。图片保存在前端仓，并通过固定提交复用，详见
-[截图来源与说明](https://github.com/3219378872/little-white-box-front/blob/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/README.md)。
+[截图来源与说明](https://github.com/3219378872/little-white-box-front/blob/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/README.md)。
 
 ### 桌面内容流 · Mock
 
-![桌面亮色内容流与侧栏商业入口，Mock 演示数据，2026-10-04](https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/mock-desktop-feed.png)
+![桌面亮色内容流与侧栏商业入口，Mock 演示数据，2026-10-04](https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/mock-desktop-feed.png)
 
 ### 移动端 · 社区与 Agent
 
@@ -25,10 +25,10 @@
 窄屏下图片依次换行。
 
 <p>
-  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/mock-mobile-feed-ad.png" alt="推荐流中带标识的广告槽位，Mock 演示数据，2026-10-04" title="推荐流广告 · Mock" width="200">
-  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/mock-mobile-search-dark.png" alt="暗色搜索结果，Mock 演示数据，2026-10-04" title="暗色搜索结果 · Mock" width="200">
-  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/mock-mobile-clarification.png" alt="Agent 澄清问答，Mock 演示数据，2026-10-04" title="Agent 澄清问答 · Mock" width="200">
-  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/real-mobile-post.png" alt="帖子详情，真实本地联调测试数据，2026-10-04" title="帖子详情 · 真实联调" width="200">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/mock-mobile-feed-ad.png" alt="推荐流中带标识的广告槽位，Mock 演示数据，2026-10-04" title="推荐流广告 · Mock" width="200">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/mock-mobile-search-dark.png" alt="暗色搜索结果，Mock 演示数据，2026-10-04" title="暗色搜索结果 · Mock" width="200">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/mock-mobile-clarification.png" alt="Agent 澄清问答，Mock 演示数据，2026-10-04" title="Agent 澄清问答 · Mock" width="200">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/real-mobile-post.png" alt="帖子详情，真实本地联调测试数据，2026-10-04" title="帖子详情 · 真实联调" width="200">
 </p>
 
 ### 移动端 · 广告与审核
@@ -36,9 +36,9 @@
 依次为：广告主控制台、审核工作台、回扫暂停后的审核任务，均为 Mock 演示数据。
 
 <p>
-  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/mock-mobile-ads.png" alt="广告主控制台，Mock 演示数据，2026-10-04" title="广告主控制台 · Mock" width="200">
-  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/mock-mobile-review.png" alt="审核工作台，Mock 演示数据，2026-10-04" title="审核工作台 · Mock" width="200">
-  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/fd6ae91efbe415a101607a483642209d2800b778/docs/assets/screenshots/mock-mobile-review-task.png" alt="回扫审核任务，Mock 演示数据，2026-10-04" title="回扫审核任务 · Mock" width="200">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/mock-mobile-ads.png" alt="广告主控制台，Mock 演示数据，2026-10-04" title="广告主控制台 · Mock" width="200">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/mock-mobile-review.png" alt="审核工作台，Mock 演示数据，2026-10-04" title="审核工作台 · Mock" width="200">
+  <img src="https://raw.githubusercontent.com/3219378872/little-white-box-front/dc911ae757d1ead653fb52ca3dbbafe8fdb213f6/docs/assets/screenshots/mock-mobile-review-task.png" alt="回扫审核任务，Mock 演示数据，2026-10-04" title="回扫审核任务 · Mock" width="200">
 </p>
 
 ## 项目介绍
