@@ -34,11 +34,12 @@ submodule 指针。本文件是工作区唯一规则入口，负责路由与根�
 | [README.md](README.md) | 面向读者的项目介绍、三仓职责与上手导航，不替代本文件规则或子仓正式知识 |
 | [.gitmodules](.gitmodules) | 子仓指针：`little-white-box-content-community`、`little-white-box-front`，均跟踪 `main` |
 | [justfile](justfile) | 本地栈唯一命令入口；recipe 是薄壳，source [deploy/dev/stack.sh](deploy/dev/stack.sh) 后调用其中函数 |
-| [deploy/dev/stack.sh](deploy/dev/stack.sh) | 被 source 的入口垫片，不要直接执行；按固定清单加载 `deploy/dev/lib/*.sh`，路径、端口、容器名均可用环境变量覆盖（`BACKEND`、`FRONTEND`、`RUN_DIR`、`ETC_DIR`、`PROXY_NAME` 等），默认值集中在 `lib/config.sh` |
+| [deploy/dev/stack.sh](deploy/dev/stack.sh) | 被 source 的入口垫片，不要直接执行；按固定清单加载 `deploy/dev/lib/*.sh`，路径、入口/前端/Gateway 端口与反代容器名可用环境变量覆盖（`BACKEND`、`FRONTEND`、`RUN_DIR`、`ETC_DIR`、`ENTRY_PORT`、`PROXY_NAME` 等），默认值集中在 `lib/config.sh`；中间件容器名与其余固定端口来自后端 compose，不在根仓覆盖 |
 | [deploy/dev/tests/](deploy/dev/tests/) | 根编排单测；`just test-dev` 全量发现，真实栈黑盒测试仍在 `e2e/` |
 | [deploy/dev/middleware-override.yml](deploy/dev/middleware-override.yml) | 叠加在后端 compose 之上的本地覆盖：端口重映射（Grafana→33000、SeaweedFS 卷 HTTP→18080）与 RocketMQ cgroup v2 规避参数 |
 | [deploy/dev/proxy.conf](deploy/dev/proxy.conf) | 同源入口 nginx 模板；端口从 config.sh 渲染到 ETC_DIR 副本（默认 :3002，`/`→前端 :3003，`/api/`→Gateway :8888，`/xbh-media/`→SeaweedFS S3 :8333）；容器 `xbh-dev-proxy` 以 `--network host` 运行 |
-| [deploy/dev/seed_dev_user.sql](deploy/dev/seed_dev_user.sql) | 测试账号种子；eval 语料与生成/灌库脚本已迁至后端仓 `eval/`、`scripts/`（见下「运行时产物与数据」） |
+| [deploy/dev/seed_dev_user.sql](deploy/dev/seed_dev_user.sql) | 测试账号种子；eval 语料与生成/灌库脚本已迁至后端仓 `eval/`、`scripts/`（见 [本地联调](deploy/dev/README.md)「运行时产物与数据」） |
+| `deploy/dev/*.py` 辅助脚本 | 由 `lib/*.sh` 调用：`render_ports.py`（端口渲染）、`wait_ready.py`（就绪等待）、`log_maintainer.py`（日志轮转）、`front_build_inputs.py`（前端构建指纹）、`serve_release.py`（前端静态伺服）；不单独作为入口 |
 | [deploy/dev/workspace_checks.py](deploy/dev/workspace_checks.py) | 只读校验根 gitlink、跨仓知识引用、后端生成漂移及前端 Gateway SDK，不向受跟踪工作树写生成物 |
 | [deploy/dev/e2e/](deploy/dev/e2e/) | 黑盒 e2e 套件（pytest，对真实联调栈 `:3002`；`just e2e` 全量，传 pytest 路径/过滤条件时只跑所选项） |
 | [deploy/dev/e2e/evidence/](deploy/dev/e2e/evidence/) | 只存需要根仓及两个 gitlink 共同解释的跨仓联调证据，不承载子仓产品语义 |

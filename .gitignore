@@ -1,6 +1,3 @@
-# Nested local trees that are not git submodules.
-refactor-content-community/
-
 .worktree/
 *.swp
 .DS_Store

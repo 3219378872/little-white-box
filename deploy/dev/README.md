@@ -34,14 +34,15 @@ procfs 显示主机无 IPv6 协议栈时去掉它，否则 nginx 会因 `Address
 
 - `just up` / `just down`（alias `start` / `stop`）：`up` 先停止现有应用，再执行
   `middleware-up` 的 schema patch，最后启动同一源码版本的应用；禁止带旧进程重放迁移。
-  `down` 会停应用、反代、algorithm profile（embedding-service / online-infer）和默认中间件
+  `down` 会停应用、反代、algorithm profile（embedding-service / online-infer / moderation-infer）和默认中间件
   容器，保留数据卷。`up` 不启也不停 infer。
 - HTTP/端口就绪等待的秒数是整个等待的单调时钟预算，探针与重试睡眠共用该预算；允许小数，
   0 表示立即超时，负数及非有限值无效。
 - `just restart`：只反弹应用与默认中间件，已在跑的 infer 保持不动；`just status`：容器、
-  进程 pid 存活与关键端口探测（含 `:50051` / `:9025`）
+  进程 pid 存活与关键端口探测（含 `:50051` / `:9025` / `:9026`）
 - `just rotate-db-credentials`：只轮换本地 app/E2E MySQL 凭据并原子改写 env，不输出新值；
-  下一次 `middleware-up` 创建独立账号并撤销旧默认账号
+  下一次 `middleware-up` 创建独立账号并撤销旧默认账号。轮换后需执行 `just up`，在此之前单独
+  `app-up` 会让服务使用数据库尚未接受的新密码
 - `just seed` = `seed-dev-user` + `seed-eval-corpus`，均可单独执行
 - `just knowledge-setup`：为三个仓库安装固定版本的隔离知识工具依赖，不修改系统 Python。
   根检查器可用 `KNOWLEDGE_PYTHON` 覆盖；子仓分别用 `BACKEND_KNOWLEDGE_PYTHON`、

@@ -2,6 +2,17 @@
 
 工作区根目录备忘，不是任一子仓正式知识链的一部分。事实以当时代码、配置和现场命令为准。
 
+> 2026-10-04 阅读提示：下文按日期保留当时快照，以下几类表述已过时，以现行代码和
+> [本地联调](deploy/dev/README.md) 为准：
+> - 后端已从 go-zero 迁到 Hertz/Kitex，`ListenOn` 登记 etcd、`TimeoutHandler` 3s 超时与 SSE
+>   `Accept` 豁免等 go-zero 机制不再适用；
+> - 中间件网络改为 `XBH_NETWORK_SUBNET`（默认 `172.30.240.0/24`）且不再分配固定 IP，
+>   172.28.x 固定地址冲突不会再出现；
+> - 反代配置由 stack 渲染到 `$ETC_DIR/proxy.conf`（默认 `/tmp/xbh-etc/proxy.conf`），
+>   不再是 `/tmp/xbh-dev-proxy.conf`；
+> - 后端增量 SQL 已移到 `deploy/sql/patches/`（如 `backfill_user_status.sql`、
+>   `20260823_post_list_cursor_indexes.sql`）。
+
 ## 2026-10-01 广告 W6（举报、申诉、回扫）联调
 
 - `just e2e deploy/dev/e2e/test_ads_review.py` 在本地栈 10 passed（含举报下线→申诉恢复、回扫暂停→人审
