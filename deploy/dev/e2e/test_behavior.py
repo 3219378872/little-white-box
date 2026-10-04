@@ -127,12 +127,16 @@ def test_accepted_events_land_in_clickhouse(user, published_post):
     while time.monotonic() < deadline:
         try:
             out = clickhouse(query)
+        except DbUnavailable as exc:
+            pytest.skip(f"ClickHouse probe unavailable: {exc}")
+        except RuntimeError as exc:
+            # Query/server errors are real failures unless they clear before
+            # the deadline; never report them as a skip.
+            last_error = exc
+        else:
             rows = [line for line in out.splitlines() if line.strip()]
             if len(rows) >= 2:
                 break
-        except (DbUnavailable, RuntimeError) as exc:
-            last_error = exc
-            pytest.skip(f"ClickHouse probe unavailable: {exc}")
         time.sleep(3)
     assert len(rows) >= 2, f"behavior events did not land in ClickHouse: {rows} {last_error}"
 

@@ -7,12 +7,14 @@ CLICKHOUSE_CONTAINER = os.environ.get("E2E_CLICKHOUSE_CONTAINER", "xbh-clickhous
 MYSQL_USER = os.environ.get("E2E_MYSQL_USER", "")
 MYSQL_PASSWORD = os.environ.get("E2E_MYSQL_PASSWORD", "")
 
-_READ_PREFIXES = ("SELECT", "SHOW", "EXPLAIN", "WITH", "DESCRIBE", "DESC")
+# No "WITH": MySQL 8 accepts "WITH ... DELETE/UPDATE", and no probe needs a CTE.
+_READ_PREFIXES = ("SELECT", "SHOW", "EXPLAIN", "DESCRIBE", "DESC")
 
 # Substrings that mean the account itself is missing or rejected (e.g. the
 # read-only e2e account was never seeded). Tests skip on DbUnavailable, so
 # credential problems must not surface as generic RuntimeError failures.
-_DB_AUTH_MARKERS = ("access denied", "error 1045", "error 1410", "error 1698")
+_DB_AUTH_MARKERS = ("access denied", "error 1045", "error 1410", "error 1698",
+                    "authentication_failed")
 
 
 class DbUnavailable(RuntimeError):
@@ -30,9 +32,20 @@ def _container_running(name):
     return proc.returncode == 0 and proc.stdout.strip() == "true"
 
 
-def _exec(container, argv, sql, *, env=None):
-    if not sql.lstrip().upper().startswith(_READ_PREFIXES):
+def _require_single_read(sql):
+    # A prefix check alone accepts "SELECT 1; DROP ..." because both CLIs read
+    # several statements from stdin. Grants remain the real boundary; this
+    # guard keeps probes to one statement. Probes never need a literal ";".
+    statement = sql.strip().rstrip(";").strip()
+    if ";" in statement:
+        raise ValueError(f"single read-only statement required, got: {sql[:60]}")
+    if not statement.upper().startswith(_READ_PREFIXES):
         raise ValueError(f"read-only SQL required, got: {sql[:60]}")
+    return statement
+
+
+def _exec(container, argv, sql, *, env=None):
+    sql = _require_single_read(sql)
     if not _container_running(container):
         raise DbUnavailable(f"docker container {container!r} is not running")
     child_env = os.environ.copy()
@@ -49,19 +62,30 @@ def _exec(container, argv, sql, *, env=None):
         if any(marker in lowered for marker in _DB_AUTH_MARKERS):
             raise DbUnavailable(
                 f"{container}: database account rejected (seeded by "
-                f"middleware-up apply_dev_db_grants): {stderr[:160]}")
+                f"middleware-up apply_dev_db_grants / "
+                f"apply_clickhouse_e2e_grants): {stderr[:160]}")
         raise RuntimeError(f"{container}: {stderr}")
     return proc.stdout.strip()
 
 
-def clickhouse(sql):
-    return _exec(CLICKHOUSE_CONTAINER, ["clickhouse-client"], sql)
-
-
-def mysql(db, sql):
+def _require_e2e_credentials():
     if not MYSQL_USER or not MYSQL_PASSWORD:
         raise DbUnavailable(
             "E2E_MYSQL_USER/E2E_MYSQL_PASSWORD were not loaded; run the "
             "root e2e recipe with a rotated dev env")
+
+
+def clickhouse(sql):
+    # Same read-only e2e identity as MySQL (seeded by middleware-up
+    # apply_clickhouse_e2e_grants), never the unrestricted `default` user.
+    # clickhouse-client reads both values from the environment.
+    _require_e2e_credentials()
+    return _exec(CLICKHOUSE_CONTAINER, ["clickhouse-client"], sql,
+                 env={"CLICKHOUSE_USER": MYSQL_USER,
+                      "CLICKHOUSE_PASSWORD": MYSQL_PASSWORD})
+
+
+def mysql(db, sql):
+    _require_e2e_credentials()
     argv = ["mysql", f"-u{MYSQL_USER}", "-h127.0.0.1", "-N", "-B", db]
     return _exec(MYSQL_CONTAINER, argv, sql, env={"MYSQL_PWD": MYSQL_PASSWORD})

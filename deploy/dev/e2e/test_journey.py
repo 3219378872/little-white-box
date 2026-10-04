@@ -59,7 +59,7 @@ def test_full_community_journey(anon, make_user, png_bytes):
          "replyUserId": reader.id, "idempotencyKey": unique_key()})
     assert reply.status_code == 200
 
-    detail = eventually(
+    eventually(
         lambda: (d := reader.client.post_detail(post_id).json())
         and d["isLiked"] and d["isFavorited"] and d["likeCount"] >= 1
         and d["favoriteCount"] >= 1 and d["commentCount"] >= 2 and d or None,
@@ -113,19 +113,24 @@ def test_full_community_journey(anon, make_user, png_bytes):
                     in behavior.json()["results"] if res["accepted"]]
     assert len(accepted_ids) == 2
 
-    reader.client.set_agent_consent(True)
-    posted = reader.client.post_assistant_message(
-        f"帖子 {title} 讲了什么", request_id=unique_key("asst"))
-    if posted.status_code == 200:
+    consent = reader.client.set_agent_consent(True)
+    assert consent.status_code == 200, consent.text[:200]
+    try:
+        posted = reader.client.post_assistant_message(
+            f"帖子 {title} 讲了什么", request_id=unique_key("asst"))
+        assert posted.status_code == 200, posted.text[:200]
         run_id = posted.json().get("runId")
-        if isinstance(run_id, int) and run_id > 0:
-            events = reader.client.assistant_run_events(run_id)
-            if events.status_code == 200:
-                frames = parse_sse_stream(events)
-                types = [f["type"] for f in frames]
-                assert types, "assistant stream produced no frames"
-                if types[-1] == "done":
-                    assert "token" in types or "run_started" in types
+        assert isinstance(run_id, int) and run_id > 0, posted.text[:200]
+        with reader.client.assistant_run_events(run_id) as events:
+            assert events.status_code == 200, events.text[:200]
+            frames = parse_sse_stream(events)
+        types = [f.get("type") for f in frames]
+        assert types, "assistant stream produced no frames"
+        # Same live-gate contract as test_assistant: the run must complete.
+        assert types[-1] == "done", f"assistant run did not complete: {frames[-1]}"
+        assert "token" in types or "run_started" in types, types
+    finally:
+        reader.client.set_agent_consent(False)
 
     update = author.client.update_post(
         post_id, {"title": f"{title} v2", "content": f"journey content {marker} updated",

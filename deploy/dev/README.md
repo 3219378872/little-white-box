@@ -92,7 +92,9 @@ procfs 显示主机无 IPv6 协议栈时去掉它，否则 nginx 会因 `Address
 - `xbh_assistant` 由上述 patches 创建；`app-up` 在 `DB_ASSISTANT` 为空时从
   `DB_CONTENT` 替换 schema 名得到 DSN。app 使用独立 `APP_MYSQL_*` 账号且只具备七个业务 schema
   的 SELECT/INSERT/UPDATE/DELETE；E2E 使用不同的 `E2E_MYSQL_*` 账号且只有 SELECT，旧 `xbh`
-  默认账号在授权收敛后删除。
+  默认账号在授权收敛后删除。同一 `E2E_MYSQL_*` 身份也在 ClickHouse 中收敛为只读
+  `xbh_analytics` 账号（SHA-256 摘要入 SQL），黑盒探针不再使用无限制的 `default` 用户；
+  探针只接受单条只读语句。轮换凭据后需重跑 `middleware-up` 同步两库账号。
 - 重启机器后 `/tmp` 产物与反代容器消失，重新 `just up` 即可。
 - CanvasKit 由静态伺服层从 `<front>/web/canvaskit/`（编排层符号链接到 SDK 缓存，随升级
   自动跟随）同源提供，构建期经 `--dart-define` 注入；SDK 缺失时回退 gstatic 并打警告。

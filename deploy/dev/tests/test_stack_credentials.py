@@ -1,3 +1,5 @@
+import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -69,6 +71,57 @@ apply_dev_db_grants
         self.assertNotIn("ON xbh_review.* TO 'app_test'@'%'", output)
         self.assertIn("GRANT SELECT ON xbh_review.* TO 'e2e_test'@'%';", output)
         self.assertIn("DROP USER IF EXISTS 'xbh'@'%';", output)
+
+    def test_clickhouse_e2e_grant_is_read_only_and_never_carries_password(self):
+        e2e_password = "B" * 32 + "' OR '1'='1"
+        script = f"""
+source {shlex.quote(str(STACK))}
+docker() {{ cat; }}
+export APP_MYSQL_USER=app_test
+export APP_MYSQL_PASSWORD={'a' * 48}
+export E2E_MYSQL_USER=e2e_test
+export E2E_MYSQL_PASSWORD={shlex.quote(e2e_password)}
+export DB_CONTENT="${{APP_MYSQL_USER}}:${{APP_MYSQL_PASSWORD}}@tcp(127.0.0.1:3306)/xbh_content"
+for key in DB_USER DB_INTERACTION DB_MEDIA DB_MESSAGE DB_FEED; do
+  export "$key=$DB_CONTENT"
+done
+apply_clickhouse_e2e_grants
+"""
+        output = run_bash(script).stdout
+        digest = hashlib.sha256(e2e_password.encode()).hexdigest()
+        self.assertNotIn(e2e_password, output)
+        self.assertIn(f"IDENTIFIED WITH sha256_hash BY '{digest}';", output)
+        self.assertIn("REVOKE ALL ON *.* FROM `e2e_test`;", output)
+        self.assertIn("GRANT SELECT ON xbh_analytics.* TO `e2e_test`;", output)
+        grants = re.findall(r"^GRANT .*$", output, re.MULTILINE)
+        self.assertEqual(grants, ["GRANT SELECT ON xbh_analytics.* TO `e2e_test`;"])
+
+    def test_middleware_up_seeds_clickhouse_e2e_account_after_schema(self):
+        stack = stack_source()
+        body = stack.split("middleware_up_locked() {", 1)[1].split("\n}", 1)[0]
+        self.assertLess(body.index("apply_analytics_schema"),
+                        body.index("apply_clickhouse_e2e_grants"))
+
+    def test_db_probe_uses_e2e_identity_and_single_read_statements(self):
+        dbprobe = (ROOT / "deploy" / "dev" / "e2e" / "dbprobe.py").read_text()
+        self.assertIn('"CLICKHOUSE_PASSWORD": MYSQL_PASSWORD', dbprobe)
+        self.assertNotIn("--password", dbprobe)
+        spec = importlib.util.spec_from_file_location(
+            "dbprobe_under_test", ROOT / "deploy" / "dev" / "e2e" / "dbprobe.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module._require_single_read(" SELECT 1;\n"), "SELECT 1")
+        for sql in (
+            "SELECT 1; DROP TABLE post",
+            "select 1;delete from post",
+            "WITH x AS (SELECT 1) DELETE FROM post",
+            "DELETE FROM post",
+        ):
+            with self.subTest(sql=sql), self.assertRaises(ValueError):
+                module._require_single_read(sql)
+        module.MYSQL_USER = ""
+        with self.assertRaises(module.DbUnavailable):
+            module.clickhouse("SELECT 1")
 
     def test_shared_or_legacy_accounts_are_rejected(self):
         script = f"""

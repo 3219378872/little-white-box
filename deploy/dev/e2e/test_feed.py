@@ -20,8 +20,22 @@ def test_follow_feed_receives_new_posts_after_follow(make_user, published_post):
                timeout=90)
 
 
-def test_follow_feed_cursor_pagination_no_duplicates(make_user):
-    a = make_user()
+def test_follow_feed_cursor_pagination_no_duplicates(make_user, published_post):
+    # A fresh follower's feed is empty, so seed enough posts for three
+    # pageSize=2 pages; otherwise the pagination loop never executes.
+    a, b = make_user(), make_user()
+    follow = a.client.follow(b.id)
+    assert follow.status_code == 200, follow.text[:200]
+    expected = {published_post(b.client)["postId"] for _ in range(5)}
+
+    def feed_has_all_posts():
+        resp = a.client.follow_feed(pageSize=50)
+        if resp.status_code != 200:
+            return False
+        return expected <= {item["postId"] for item in resp.json()["items"]}
+    eventually(feed_has_all_posts, desc="follow feed fans out seeded posts",
+               timeout=90)
+
     r = a.client.follow_feed(pageSize=2)
     assert r.status_code == 200
     body = r.json()
@@ -42,6 +56,8 @@ def test_follow_feed_cursor_pagination_no_duplicates(make_user):
                                    cursorPostId=body["nextCursorPostId"])
         assert nxt.status_code == 200
         body = nxt.json()
+    assert pages >= 3, f"expected at least 3 pages of 2, got {pages}"
+    assert expected <= seen, f"pagination skipped posts: {sorted(expected - seen)}"
 
 
 def test_follow_feed_requires_auth(anon):

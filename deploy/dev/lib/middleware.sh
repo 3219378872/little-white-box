@@ -152,6 +152,28 @@ apply_analytics_schema() {
   docker exec -i xbh-clickhouse clickhouse-client --multiquery <"$sql"
 }
 
+# The black-box suite reads xbh_analytics through the same read-only e2e
+# identity as MySQL instead of the unrestricted ClickHouse `default` user.
+# Only a SHA-256 hex digest reaches SQL, so the password is never interpolated
+# as a literal or printed; revoke-first drops grants from older stack versions.
+apply_clickhouse_e2e_grants() {
+  validate_dev_db_env || return 1
+  local e2e_user="$E2E_MYSQL_USER" digest
+  digest="$(printf '%s' "$E2E_MYSQL_PASSWORD" | python3 -c \
+    'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')" || return 1
+  if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "failed to hash ClickHouse e2e password" >&2
+    return 1
+  fi
+  echo "seeding read-only ClickHouse e2e account (${e2e_user})"
+  docker exec -i xbh-clickhouse clickhouse-client --multiquery <<SQL
+CREATE USER IF NOT EXISTS \`${e2e_user}\` IDENTIFIED WITH sha256_hash BY '${digest}';
+ALTER USER \`${e2e_user}\` IDENTIFIED WITH sha256_hash BY '${digest}';
+REVOKE ALL ON *.* FROM \`${e2e_user}\`;
+GRANT SELECT ON xbh_analytics.* TO \`${e2e_user}\`;
+SQL
+}
+
 mysql_root() {
   local pass="${MYSQL_ROOT_PASSWORD:-Xbh@MySQL2024!}"
   MYSQL_PWD="$pass" docker exec -i -e MYSQL_PWD xbh-mysql \
@@ -428,6 +450,7 @@ middleware_up_locked() {
   wait_topics 180 || return $?
   wait_healthy xbh-clickhouse 120 clickhouse || return $?
   apply_analytics_schema || return $?
+  apply_clickhouse_e2e_grants || return $?
   wait_http "http://127.0.0.1:3100/ready" 90 loki || return $?
   wait_port 127.0.0.1 9333 60 seaweedfs-master || true
 }
