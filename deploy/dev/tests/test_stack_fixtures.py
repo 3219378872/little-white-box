@@ -8,6 +8,7 @@ from deploy.dev.tests.stack_support import (
     STACK,
     run_bash,
     stack_source,
+    source_stack,
 )
 
 
@@ -16,9 +17,7 @@ class StackFixturesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             events = Path(tmp_dir) / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events)}
 AGENT_FIXTURE_RESTORE=1
 stop_svc() {{
   printf 'stop:%s\n' "$1" >>"$TEST_EVENTS"
@@ -47,9 +46,7 @@ printf 'status=%s restore=%s\n' "$status" "$AGENT_FIXTURE_RESTORE"
         with tempfile.TemporaryDirectory() as tmp_dir:
             events = Path(tmp_dir) / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events)}
 stop_svc() {{ builtin printf 'stop:%s\n' "$1" >>"$TEST_EVENTS"; }}
 start_row() {{ builtin printf 'start:%s\n' "${{1%%|*}}" >>"$TEST_EVENTS"; }}
 wait_port() {{ builtin printf '%s\n' wait-port >>"$TEST_EVENTS"; }}

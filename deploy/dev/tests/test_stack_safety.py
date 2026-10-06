@@ -1,16 +1,12 @@
-import shlex
-import subprocess
 import unittest
-from pathlib import Path
 
-
-STACK = Path(__file__).resolve().parents[1] / "stack.sh"
+from deploy.dev.tests.stack_support import run_bash, source_stack
 
 
 class AssistantMigrationSafetyTest(unittest.TestCase):
     def run_case(self, marker_table, marker, rows):
         script = f"""
-source {shlex.quote(str(STACK))}
+{source_stack()}
 mysql_root() {{
   if [[ "$*" == *"SELECT table_name"* ]]; then
     printf '%s\\n' assistant_message
@@ -24,8 +20,7 @@ mysql_root() {{
 }}
 require_safe_assistant_baseline
 """
-        return subprocess.run(["bash", "-euo", "pipefail", "-c", script],
-                              capture_output=True, text=True, check=False)
+        return run_bash(script, check=False)
 
     def test_existing_marker_preserves_populated_database(self):
         result = self.run_case(1, 1, 1)

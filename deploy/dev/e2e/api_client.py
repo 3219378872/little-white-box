@@ -217,6 +217,11 @@ class ApiClient:
     def upload_image(self, file_tuple):
         return self.post("/api/v1/media/image", files={"file": file_tuple})
 
+    def upload_media(self, kind, file_tuple, idempotency_key, timeout=330):
+        """Upload to /api/v1/media/{image,video,audio}; transcoding can be slow."""
+        return self.post(f"/api/v1/media/{kind}", files={"file": file_tuple},
+                         data={"idempotencyKey": idempotency_key}, timeout=timeout)
+
     def behavior_events(self, events, anonymous_id=None, session_id=None,
                         auth=None):
         payload = {"events": events}

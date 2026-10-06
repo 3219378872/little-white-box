@@ -14,6 +14,7 @@ from deploy.dev.tests.stack_support import (
     stop_test_process,
     unused_loopback_port,
     wait_for_port,
+    source_stack,
 )
 
 
@@ -46,11 +47,7 @@ class StackPortCleanupTest(unittest.TestCase):
                 pidfile.write_text("99999999\n", encoding="ascii")
                 owner.write_text(f"{recorded_token}\n", encoding="ascii")
                 script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(RUN_DIR=run_dir, LOG_DIR=run_dir / 'logs', PID_DIR=pid_dir)}
 listening_port_pids() {{ builtin printf '%s\n' {process.pid}; }}
 port_open() {{ return 1; }}
 stop_owned_port gateway 8888
@@ -65,8 +62,7 @@ stop_owned_port gateway 8888
 
     def test_stopped_app_guard_rejects_an_untracked_gateway_port(self):
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 all_app_names() {{ printf 'gateway\n'; }}
 validated_service_pid() {{ return 1; }}
 service_process_pids() {{ return 0; }}
@@ -80,8 +76,7 @@ require_apps_stopped_for_patches
 
     def test_stop_owned_port_fails_when_a_reported_owner_leaves_it_open(self):
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 listening_port_pids() {{ printf '4242\n'; }}
 service_process_matches() {{ return 0; }}
 stop_tree() {{ return 0; }}
@@ -95,8 +90,7 @@ stop_owned_port gateway 8888
 
     def test_port_owner_listing_excludes_other_local_interfaces(self):
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 ss() {{
   printf '%s\n' \
     'LISTEN 0 128 127.0.0.2:8888 0.0.0.0:* users:(("x",pid=111,fd=3))' \
@@ -126,8 +120,7 @@ listening_port_pids 8888
             )
             lsof.chmod(0o700)
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 PATH={shlex.quote(str(bin_dir))}
 listening_port_pids 8888
 """

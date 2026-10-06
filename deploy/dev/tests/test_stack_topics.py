@@ -1,9 +1,12 @@
 from pathlib import Path
-import shlex
 import tempfile
 import unittest
 
-from deploy.dev.tests.stack_support import ROOT, STACK, run_bash
+from deploy.dev.tests.stack_support import (
+    ROOT,
+    run_bash,
+    source_stack,
+)
 
 
 BOOTSTRAP = """#!/usr/bin/env bash
@@ -30,9 +33,7 @@ def write_backend(root, content):
 
 def topics_script(backend, body):
     return f"""
-export ROOT={shlex.quote(str(ROOT))}
-export BACKEND={shlex.quote(str(backend))}
-source {shlex.quote(str(STACK))}
+{source_stack(BACKEND=backend)}
 {body}
 """
 

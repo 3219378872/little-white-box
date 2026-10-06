@@ -1,15 +1,15 @@
 from pathlib import Path
 import re
-import shlex
 import tempfile
 import unittest
 
 from deploy.dev.tests.stack_support import (
     ROOT,
-    STACK,
     JUSTFILE,
     run_bash,
     stack_source,
+    runtime_env,
+    source_stack,
 )
 
 
@@ -18,10 +18,7 @@ class StackLifecycleTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             events = Path(tmp_dir) / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(Path(tmp_dir) / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events, APP_LIFECYCLE_LOCK=Path(tmp_dir) / 'app.lock')}
 record() {{ printf '%s\\n' "$1" >>"$TEST_EVENTS"; }}
 load_env() {{ record load_env; }}
 ensure_assistant_db_env() {{ record ensure_assistant_db_env; }}
@@ -70,10 +67,7 @@ app_up
         with tempfile.TemporaryDirectory() as tmp_dir:
             events = Path(tmp_dir) / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(Path(tmp_dir) / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events, APP_LIFECYCLE_LOCK=Path(tmp_dir) / 'app.lock')}
 record() {{ printf '%s\\n' "$1" >>"$TEST_EVENTS"; }}
 load_env() {{ record load_env; }}
 ensure_assistant_db_env() {{ record ensure_assistant_db_env; }}
@@ -132,10 +126,7 @@ printf 'status=%s\\n' "$status"
             temp = Path(tmp_dir)
             events = temp / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events, APP_LIFECYCLE_LOCK=temp / 'app.lock')}
 record() {{ builtin printf '%s\n' "$1" >>"$TEST_EVENTS"; }}
 load_env() {{ return 0; }}
 ensure_assistant_db_env() {{ return 0; }}
@@ -172,10 +163,7 @@ builtin printf 'status=%s\n' "$status"
             temp = Path(tmp_dir)
             events = temp / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events, APP_LIFECYCLE_LOCK=temp / 'app.lock')}
 agent_alive=0
 load_env() {{ return 0; }}
 ensure_assistant_db_env() {{ return 0; }}
@@ -221,10 +209,7 @@ builtin printf 'status=%s\n' "$status"
 
     def search_index_gate_script(self, events, lock, index_status):
         return f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(lock))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events, APP_LIFECYCLE_LOCK=lock)}
 record() {{ builtin printf '%s\\n' "$1" >>"$TEST_EVENTS"; }}
 load_env() {{ :; }}
 ensure_assistant_db_env() {{ :; }}
@@ -294,14 +279,7 @@ builtin printf 'status=%s\\n' "$status"
             events = temp / "events"
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'), TEST_EVENTS=events)}
 load_env() {{ printf '%s\n' load_env >>"$TEST_EVENTS"; return 42; }}
 require_apps_stopped_for_patches() {{ printf '%s\n' guard >>"$TEST_EVENTS"; }}
 require_compose_version() {{ printf '%s\n' compose-version >>"$TEST_EVENTS"; }}
@@ -323,14 +301,7 @@ printf 'status=%s\n' "$status"
             events = temp / "events"
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'), TEST_EVENTS=events)}
 require_apps_stopped_for_patches() {{
   printf 'guard:%s\n' "$1" >>"$TEST_EVENTS"
   return 55
@@ -360,14 +331,7 @@ printf 'status=%s\n' "$status"
             (patch_dir / "002-second.sql").write_text("SELECT 2;\n", encoding="ascii")
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export BACKEND={shlex.quote(str(backend))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'), BACKEND=backend)}
 calls=0
 mysql_root() {{
   calls=$((calls + 1))
@@ -392,15 +356,7 @@ builtin printf 'status=%s calls=%s\n' "$status" "$calls"
             events = temp / "events"
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export BACKEND={shlex.quote(str(backend))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'), BACKEND=backend, TEST_EVENTS=events)}
 python3() {{
   builtin printf '%s\n' python >>"$TEST_EVENTS"
   return 43
@@ -431,18 +387,7 @@ builtin printf 'status=%s\n' "$status"
             release = temp / "release"
             events = temp / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-export TEST_ENTERED_UP={shlex.quote(str(entered_up))}
-export TEST_CONTENDER_STARTED={shlex.quote(str(contender_started))}
-export TEST_ENTERED_DOWN={shlex.quote(str(entered_down))}
-export TEST_RELEASE={shlex.quote(str(release))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'), TEST_ENTERED_UP=entered_up, TEST_CONTENDER_STARTED=contender_started, TEST_ENTERED_DOWN=entered_down, TEST_RELEASE=release, TEST_EVENTS=events)}
 up_pid=""
 down_pid=""
 cleanup() {{
@@ -535,13 +480,7 @@ trap - EXIT
             temp = Path(tmp_dir)
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'))}
 compose() {{ return 44; }}
 set +e
 algorithm_down
@@ -572,8 +511,7 @@ builtin printf 'status=%s\n' "$status"
 
     def test_start_row_keeps_row_fields_local(self):
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 start_svc() {{ builtin printf 'started=%s|%s|%s|%s|%s\n' "$@"; }}
 name=caller workdir=caller-dir
 start_row "svc|/w|./bin|-f|/c.yaml"
@@ -602,13 +540,7 @@ builtin printf 'name=%s workdir=%s\n' "$name" "$workdir"
             temp = Path(tmp_dir)
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'))}
 app_down_locked() {{ echo app_down; }}
 algorithm_down_locked() {{ echo algorithm_down; }}
 middleware_down_locked() {{ echo middleware_down; }}
@@ -636,13 +568,7 @@ stack_down_locked
             temp = Path(tmp_dir)
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'))}
 app_down_locked() {{ echo app_down; }}
 algorithm_down_locked() {{ echo algorithm_down; }}
 middleware_down_locked() {{ echo middleware_down; }}

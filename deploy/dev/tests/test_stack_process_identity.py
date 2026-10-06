@@ -14,6 +14,7 @@ from deploy.dev.tests.stack_support import (
     run_bash,
     stop_test_process,
     stack_source,
+    source_stack,
 )
 
 
@@ -22,8 +23,7 @@ class StackProcessIdentityTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             missing = Path(tmp_dir) / "missing" / "gateway"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 canonical_path {shlex.quote(str(missing))}
 """
             result = run_bash(script, check=False)
@@ -40,9 +40,7 @@ canonical_path {shlex.quote(str(missing))}
             pidfile.write_text("99999999\n", encoding="ascii")
             owner.write_text("gateway:stale-token\n", encoding="ascii")
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir)}
 pid_state gateway
 """
             result = run_bash(script)
@@ -91,8 +89,7 @@ service_process_matches log-maintainer {maintainer.pid}
     def test_non_procfs_fallback_recognizes_python_script_identity(self):
         script_path = ROOT / "deploy" / "dev" / "log_maintainer.py"
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 kill() {{ [[ "$1" == -0 ]]; }}
 ps() {{
   printf '%s\n' 'python3 {shlex.quote(str(script_path))} /tmp/logs --interval 30'
@@ -148,11 +145,7 @@ service_process_matches log-maintainer 99999999
                 pidfile.write_text(f"{process.pid}\n", encoding="ascii")
                 owner.write_text(f"{recorded_token}\n", encoding="ascii")
                 script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(RUN_DIR=run_dir, LOG_DIR=run_dir / 'logs', PID_DIR=pid_dir)}
 stop_svc gateway
 """
                 result = run_bash(script, check=False)

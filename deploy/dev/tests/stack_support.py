@@ -1,6 +1,8 @@
+import importlib.util
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import socket
 import subprocess
@@ -12,7 +14,35 @@ STACK = ROOT / "deploy" / "dev" / "stack.sh"
 JUSTFILE = ROOT / "justfile"
 
 
+def load_script_module(name, path):
+    """Import a standalone helper script (not a package module) for unit tests."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def runtime_env(run_dir, *, etc_dir=None, lock=None):
+    """RUN_DIR with its logs/ and pids/ (plus optional ETC_DIR and lock) for a test."""
+    env = {"RUN_DIR": run_dir, "LOG_DIR": run_dir / "logs", "PID_DIR": run_dir / "pids"}
+    if etc_dir is not None:
+        env["ETC_DIR"] = etc_dir
+    if lock is not None:
+        env["APP_LIFECYCLE_LOCK"] = lock
+    return env
+
+
+def source_stack(**env):
+    """Bash preamble: export ROOT and ENV (in order), then source stack.sh."""
+    lines = [f"export ROOT={shlex.quote(str(ROOT))}"]
+    lines += [f"export {key}={shlex.quote(str(value))}" for key, value in env.items()]
+    lines.append(f"source {shlex.quote(str(STACK))}")
+    return "\n".join(lines)
+
+
 def run_bash(script, *, check=True, timeout=30):
+    """Run SCRIPT under `bash -euo pipefail` from the repo root."""
     result = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
         cwd=ROOT,

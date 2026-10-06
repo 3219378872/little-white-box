@@ -1,5 +1,4 @@
 """Deterministic synthetic-only regression tests for log cleanup boundaries."""
-import importlib.util
 from pathlib import Path
 import shlex
 import subprocess
@@ -10,12 +9,16 @@ import time
 import unittest
 from unittest.mock import patch
 
-from deploy.dev.tests.stack_support import ROOT, STACK, run_bash, wait_for_path
+from deploy.dev.tests.stack_support import (
+    ROOT,
+    STACK,
+    load_script_module,
+    run_bash,
+    wait_for_path,
+)
 
 SCRIPT = ROOT / 'deploy/dev/log_maintainer.py'
-spec = importlib.util.spec_from_file_location('log_lifecycle', SCRIPT)
-logs = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(logs)
+logs = load_script_module('log_lifecycle', SCRIPT)
 
 
 class LogLifecycleTest(unittest.TestCase):

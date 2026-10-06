@@ -6,7 +6,6 @@ the real stack. Machine auto-pass and QA sampling need the embedding Router
 with seeds plus a non-stub Ranker, so they stay at the unit/integration level.
 """
 import base64
-import socket
 import uuid
 
 import pytest
@@ -17,10 +16,10 @@ from ads_support import (E2E_PREFIX, MARKET, ad_payload, claim_matching, decide,
 from api_client import assert_error
 from dbprobe import DbUnavailable, mysql
 from poll import eventually
-from support import BASE_URL
+from support import BASE_URL, PNG_1X1, port_open
 
-PNG_1X1 = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+# Stub ranker sidecar from `just infer-up` (compose "algorithm" profile).
+MODERATION_INFER_PORT = 9026
 
 
 def unique_png():
@@ -265,15 +264,9 @@ def test_role_revocation_is_immediate(make_user):
     assert_error(reviewer.client.post("/api/v2/review/tasks/claim", json={}), 403, 7003)
 
 
-def _port_open(port):
-    with socket.socket() as sock:
-        sock.settimeout(1)
-        return sock.connect_ex(("127.0.0.1", port)) == 0
-
-
 # RVW-013：精排分数达到允许自动拒绝的阈值时直接拒绝（需 `just infer-up` 启动精排占位 sidecar）。
 def test_ranker_fixture_auto_rejects(advertiser):
-    if not _port_open(9026):
+    if not port_open(MODERATION_INFER_PORT):
         pytest.skip("moderation-infer is not running; start it with `just infer-up`")
     ad = create_ad(advertiser, "ranker", body="Konten uji [[fixture:CONTENT.SELF_HARM=0.97]]")
     rejected = wait_ad(advertiser, ad["adId"], lambda a: a["reviewStatus"] == "rejected", desc="ranker auto reject")
@@ -348,7 +341,7 @@ def test_report_takes_ad_offline_and_appeal_restores_it(anon, advertiser, review
 # ADS-031 / ADS-A07：生效种子库变化后在投广告按新代次回扫；判定违规先暂停（停止投放）并进入人审，
 # 人审确认后下线，否定后恢复投放。需要精排占位 sidecar（`just infer-up`，fixture 标记驱动分数）。
 def test_rescan_pauses_violations_until_human_review(anon, advertiser, reviewers):
-    if not _port_open(9026):
+    if not port_open(MODERATION_INFER_PORT):
         pytest.skip("moderation-infer is not running; start it with `just infer-up`")
     first, second, admin = reviewers["first"], reviewers["second"], reviewers["admin"]
     body = "Kopi hemat [[fixture:CONTENT.DECEPTIVE=0.97]]"

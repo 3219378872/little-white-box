@@ -10,9 +10,10 @@ FIXTURES = Path(__file__).with_name('fixtures')
 
 
 def upload(client, kind, name, data=None, key=None):
-    return client.post(f'/api/v1/media/{kind}',
-                       files={'file': (name, data if data is not None else (FIXTURES / name).read_bytes(), 'application/octet-stream')},
-                       data={'idempotencyKey': key or unique_key('upload')}, timeout=330)
+    """Upload fixture NAME (or DATA) as KIND with a generic content type."""
+    content = data if data is not None else (FIXTURES / name).read_bytes()
+    return client.upload_media(kind, (name, content, 'application/octet-stream'),
+                               key or unique_key('upload'))
 
 
 @pytest.mark.parametrize('kind,name,msg_type', [

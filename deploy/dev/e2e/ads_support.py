@@ -49,6 +49,8 @@ def revoke(user):
 
 
 def key(prefix="ad"):
+    # Random per call (not the per-run sequence of support.unique_key), so a key
+    # never depends on how many other helpers ran before it.
     return f"{prefix}-{uuid.uuid4().hex[:16]}"
 
 
@@ -117,10 +119,11 @@ def wait_ad(owner, ad_id, predicate, desc, timeout=90):
 
 
 def recommend(client, session_id, ad_slots=True, request_id=None, market=MARKET):
+    """One anonymous recommend page in MARKET, optionally with a sponsored slot."""
     params = {"anonymousId": f"anon-{session_id}", "sessionId": session_id,
-              "requestId": request_id or key("req"), "pageSize": 20, "market": market}
+              "pageSize": 20, "market": market}
     if ad_slots:
         params["adSlots"] = 1
-    r = client.get("/api/v2/feed/recommend", params=params)
+    r = client.recommend(request_id=request_id or key("req"), **params)
     assert r.status_code == 200, f"recommend failed: {r.status_code} {r.text[:200]}"
     return r.json()

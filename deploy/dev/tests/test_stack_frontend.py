@@ -7,6 +7,7 @@ from deploy.dev.tests.stack_support import (
     ROOT,
     STACK,
     run_bash,
+    source_stack,
 )
 
 
@@ -23,10 +24,7 @@ class StackFrontendTest(unittest.TestCase):
             run_dir.mkdir()
             (run_dir / "front-build.stamp").touch()
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export FRONTEND={shlex.quote(str(frontend))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(FRONTEND=frontend, RUN_DIR=run_dir)}
 front_build_fingerprint() {{ return 52; }}
 set +e
 front_bundle_fresh
@@ -121,8 +119,7 @@ fi
 
     def test_proxy_up_rejects_container_that_exits_immediately(self):
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 prepare_proxy_conf() {{ return 0; }}
 docker() {{
   if [[ "$1" == ps ]]; then
@@ -148,8 +145,7 @@ builtin printf 'status=%s starts=%s\n' "$status" "${{APP_UP_STARTED_SERVICES[*]}
 
     def test_proxy_up_propagates_container_listing_failure(self):
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 prepare_proxy_conf() {{ return 0; }}
 docker() {{ return 54; }}
 set +e
@@ -165,8 +161,7 @@ builtin printf 'status=%s\n' "$status"
 
     def test_proxy_down_propagates_container_listing_failure(self):
         script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 prepare_proxy_conf() {{ return 0; }}
 docker() {{ return 53; }}
 set +e

@@ -13,6 +13,8 @@ from deploy.dev.tests.stack_support import (
     STACK,
     run_bash,
     stack_source,
+    runtime_env,
+    source_stack,
 )
 
 
@@ -153,14 +155,7 @@ validate_dev_db_env
             )
             os.chmod(env_path, 0o600)
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export ENV_FILE={shlex.quote(str(env_path))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'), ENV_FILE=env_path)}
 rotate_dev_db_credentials
 load_env
 """
@@ -194,15 +189,7 @@ load_env
             counter = temp / "secret-counter"
             run_dir = temp / "run"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export ENV_FILE={shlex.quote(str(env_path))}
-export APP_LIFECYCLE_LOCK={shlex.quote(str(temp / 'app.lock'))}
-export TEST_SECRET_COUNTER={shlex.quote(str(counter))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc', lock=temp / 'app.lock'), ENV_FILE=env_path, TEST_SECRET_COUNTER=counter)}
 random_hex_secret() {{
   if [[ -e "$TEST_SECRET_COUNTER" ]]; then
     builtin printf '%s' {'b' * 48}

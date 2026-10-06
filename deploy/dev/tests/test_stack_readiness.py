@@ -10,6 +10,8 @@ from deploy.dev.tests.stack_support import (
     STACK,
     run_bash,
     process_is_running,
+    runtime_env,
+    source_stack,
 )
 
 
@@ -20,9 +22,7 @@ class StackReadinessTest(unittest.TestCase):
             pid_dir.mkdir()
             (pid_dir / "assistant-agent.pid").write_text("4242\n", encoding="ascii")
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir)}
 validated_service_pid() {{ builtin printf '%s\n' 4242; }}
 read_service_owner_token() {{ builtin printf '%s\n' 'assistant-agent:test:token:1'; }}
 assistant_agent_ready_matches() {{ [[ "$TEST_READY" == 1 ]]; }}
@@ -94,11 +94,7 @@ builtin printf 'sleep_calls=%s\n' "$sleep_calls"
             pidfile.write_text("4242\n", encoding="ascii")
             owner.write_text(f"{token}\n", encoding="ascii")
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-export TEST_LOG={shlex.quote(str(logfile))}
-export TEST_OWNER={shlex.quote(str(owner))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir, TEST_LOG=logfile, TEST_OWNER=owner)}
 service_process_matches() {{ return 0; }}
 process_has_owner_token() {{ [[ "$2" == {shlex.quote(token)} ]]; }}
 sleep() {{
@@ -132,10 +128,7 @@ builtin printf 'status=%s\n' "$status"
             Path(f"{pidfile}.owner").write_text(f"{token}\n", encoding="ascii")
             slept = temp / "slept"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-export TEST_SLEPT={shlex.quote(str(slept))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir, TEST_SLEPT=slept)}
 service_process_matches() {{ return 0; }}
 process_has_owner_token() {{ return 0; }}
 listening_port_pids() {{ builtin printf '%s\n' 9999; }}
@@ -161,8 +154,7 @@ builtin printf 'status=%s\n' "$status"
                 "Assistant agent worker started\n", encoding="utf-8"
             )
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 assistant_agent_launch_matches() {{ return 0; }}
 listener_checks=0
 listening_port_owner_state() {{
@@ -186,8 +178,7 @@ builtin printf 'listener_checks=%s sleep_calls=%s\n' "$listener_checks" "$sleep_
             logfile = Path(tmp_dir) / "assistant-agent.log"
             logfile.write_text("not ready\n", encoding="utf-8")
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 assistant_agent_launch_matches() {{ return 0; }}
 sleep() {{ return 77; }}
 set +e
@@ -206,13 +197,7 @@ builtin printf 'status=%s\n' "$status"
             run_dir = temp / "run"
             events = temp / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(run_dir / 'pids'))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(**runtime_env(run_dir, etc_dir=temp / 'etc'), TEST_EVENTS=events)}
 validated_service_pid() {{ builtin printf '%s\n' 4242; }}
 read_service_owner_token() {{ builtin printf '%s\n' 'assistant-agent:test:token:1'; }}
 assistant_agent_ready_matches() {{

@@ -9,12 +9,11 @@ import time
 import unittest
 
 from deploy.dev.tests.stack_support import (
-    ROOT,
-    STACK,
     run_bash,
     stop_test_process,
     wait_for_path,
     process_is_running,
+    source_stack,
 )
 
 
@@ -33,11 +32,7 @@ class StackProcessStopTest(unittest.TestCase):
                 pidfile = pid_dir / "gateway.pid"
                 pidfile.write_text(f"{sleeper.pid}\n", encoding="ascii")
                 script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(RUN_DIR=run_dir, LOG_DIR=run_dir / 'logs', PID_DIR=pid_dir)}
 stop_svc gateway
 """
                 result = run_bash(script)
@@ -85,9 +80,7 @@ stop_svc gateway
                 pidfile.write_text(f"{leader.pid}\n", encoding="ascii")
                 owner.write_text(f"{token}\n", encoding="ascii")
                 script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir)}
 stop_svc gateway
 """
                 result = run_bash(script)
@@ -113,9 +106,7 @@ stop_svc gateway
             pidfile = pid_dir / "gateway.pid"
             pidfile.write_text("4242\n", encoding="ascii")
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir)}
 validated_service_pid() {{ printf '4242\n'; }}
 service_process_matches() {{ return 0; }}
 kill() {{ return 1; }}
@@ -134,9 +125,7 @@ stop_svc gateway
         with tempfile.TemporaryDirectory() as tmp_dir:
             events = Path(tmp_dir) / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events)}
 checks=0
 service_process_can_be_stopped() {{
   checks=$((checks + 1))
@@ -168,10 +157,7 @@ builtin printf 'status=%s\n' "$status"
             )
             events = temp / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir, TEST_EVENTS=events)}
 token_checks=0
 process_group_running() {{ return 0; }}
 process_group_has_owner_token() {{
@@ -201,10 +187,7 @@ builtin printf 'status=%s\n' "$status"
             pidfile.write_text("4242\n", encoding="ascii")
             owner.write_text("gateway:test:token:1\n", encoding="ascii")
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pidfile.parent))}
-export TEST_PIDFILE={shlex.quote(str(pidfile))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pidfile.parent, TEST_PIDFILE=pidfile)}
 validated_service_pid() {{ printf '4242\n'; }}
 stop_tree() {{ return 0; }}
 rm() {{
@@ -231,9 +214,7 @@ stop_svc gateway
                 "4242\nassistant-agent:stale:token:1\n", encoding="ascii"
             )
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(PID_DIR=pid_dir)}
 stop_svc assistant-agent
 """
             run_bash(script)
@@ -259,11 +240,7 @@ stop_svc assistant-agent
                 pidfile = pid_dir / "gateway.pid"
                 pidfile.write_text(f"{process.pid}\n", encoding="ascii")
                 script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export RUN_DIR={shlex.quote(str(run_dir))}
-export LOG_DIR={shlex.quote(str(run_dir / 'logs'))}
-export PID_DIR={shlex.quote(str(pid_dir))}
-source {shlex.quote(str(STACK))}
+{source_stack(RUN_DIR=run_dir, LOG_DIR=run_dir / 'logs', PID_DIR=pid_dir)}
 stop_svc gateway
 """
                 run_bash(script)

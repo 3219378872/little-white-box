@@ -1,4 +1,3 @@
-import base64
 
 import pytest
 
@@ -55,9 +54,8 @@ def user(make_user):
 
 @pytest.fixture()
 def png_bytes():
-    return base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
-        "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+    from support import PNG_1X1
+    return PNG_1X1
 
 
 @pytest.fixture()

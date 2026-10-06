@@ -13,6 +13,7 @@ from deploy.dev.tests.stack_support import (
     run_bash,
     process_is_running,
     stop_test_pid_group,
+    source_stack,
 )
 
 
@@ -22,8 +23,7 @@ class StackProcessStartTest(unittest.TestCase):
             pidfile = Path(tmp_dir) / "gateway.pid"
             token = "gateway:123:456:test"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 record_started_pid gateway 4242 {shlex.quote(str(pidfile))} {shlex.quote(token)}
 """
             run_bash(script)
@@ -79,8 +79,7 @@ builtin printf 'pid=%s\n' "$started_pid"
             pidfile = temp / "service.pid"
             captured_pid = temp / "started.pid"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 token="test-service:$BASHPID:$RANDOM:test"
 env "$MANAGED_PROCESS_TOKEN_ENV=$token" setsid sleep 300 &
 started_pid=$!
@@ -110,9 +109,7 @@ printf 'status=%s alive=%s\n' "$status" "$alive"
         with tempfile.TemporaryDirectory() as tmp_dir:
             events = Path(tmp_dir) / "events"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export TEST_EVENTS={shlex.quote(str(events))}
-source {shlex.quote(str(STACK))}
+{source_stack(TEST_EVENTS=events)}
 group_checks=0
 process_group_running() {{
   group_checks=$((group_checks + 1))
@@ -146,8 +143,7 @@ stop_started_tree transitioning 4242
             tree.chmod(0o700)
             captured_pid = temp / "tree.pid"
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 setsid {shlex.quote(str(tree))} &
 started_pid=$!
 printf '%s\n' "$started_pid" >{shlex.quote(str(captured_pid))}
@@ -175,8 +171,7 @@ printf 'status=%s group_alive=%s\n' "$status" "$group_alive"
             pidfile.write_text("4242\n", encoding="ascii")
             owner.write_text("gateway:test:token:1\n", encoding="ascii")
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-source {shlex.quote(str(STACK))}
+{source_stack()}
 stop_started_tree() {{ return 37; }}
 remove_service_state() {{ printf '%s\n' removed; return 0; }}
 set +e

@@ -7,6 +7,7 @@ from deploy.dev.tests.stack_support import (
     ROOT,
     STACK,
     run_bash,
+    source_stack,
 )
 
 
@@ -112,10 +113,7 @@ prepare_etc
                 encoding="utf-8",
             )
             script = f"""
-export ROOT={shlex.quote(str(ROOT))}
-export BACKEND={shlex.quote(str(backend))}
-export ETC_DIR={shlex.quote(str(temp / 'etc'))}
-source {shlex.quote(str(STACK))}
+{source_stack(BACKEND=backend, ETC_DIR=temp / 'etc')}
 prepare_etc
 """
             result = run_bash(script, check=False)
