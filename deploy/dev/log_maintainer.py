@@ -15,7 +15,7 @@ import tempfile
 import time
 
 
-ASSISTANT_LOG_NAMES = ("assistant-rpc", "assistant-watch", "assistant-agent")
+ASSISTANT_LOG_NAMES = ("assistant-rpc", "assistant-agent")
 
 
 @contextmanager

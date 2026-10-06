@@ -9,7 +9,6 @@ CANARY_TOOL = "assistant_capability_canary"
 CANARY_CALL_ID = "fixture-canary-call"
 RESET_MARKER = "E2E_STREAM_RESET_MARKER"
 RESEARCH_MARKER = "E2E_RESEARCH_MARKER"
-WATCH_MARKER = "UNTRUSTED_WATCH_HITS_JSON"
 
 
 class FixtureState:
@@ -65,9 +64,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if scenario_marker == RESEARCH_MARKER:
                 self._research(body)
-                return
-            if scenario_marker == WATCH_MARKER:
-                self._watch(body)
                 return
         except (TypeError, ValueError):
             self._json({"error": {"message": "invalid fixture marker payload"}}, status=400)
@@ -196,45 +192,6 @@ class Handler(BaseHTTPRequestHandler):
             block = {"kind": "limitation", "text": "社区资料不足，互联网检索暂时不可用，不能作出确定结论。", "citations": []}
         self._tool_response(body, "research-publish", "publish_answer", {"blocks": [block]})
 
-    def _watch(self, body):
-        watch, outputs = self._marked_exchange(body, WATCH_MARKER)
-        hits = watch.get("hits") or []
-        post_id = 0
-        if hits:
-            raw_post_id = hits[0].get("post_id_exact") or hits[0].get("post_id")
-            try:
-                post_id = int(raw_post_id)
-            except (TypeError, ValueError):
-                post_id = 0
-
-        if "watch-get-post" not in outputs and post_id > 0:
-            self._tool_response(body, "watch-get-post", "get_post", {
-                "post_id": post_id,
-            })
-            return
-
-        sources = self._sources(outputs.get("watch-get-post"))
-        if sources and sources[0].get("retrieved_evidence"):
-            source = sources[0]
-            evidence = source["retrieved_evidence"][0]
-            block = {
-                "kind": "fact",
-                "text": evidence["text"],
-                "citations": [{
-                    "handle": source["handle"],
-                    "evidenceIds": [evidence["id"]],
-                }],
-            }
-        else:
-            block = {
-                "kind": "limitation",
-                "text": "Watch 命中的帖子当前无法回源，暂不提供未经核实的内容。",
-                "citations": [],
-            }
-        self._tool_response(body, "watch-publish", "publish_answer", {
-            "blocks": [block],
-        })
-
     @staticmethod
     def _marked_exchange(body, marker):
         payload = {}
@@ -261,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
             content = Handler._input_text(item.get("content", ""))
             position = len(content)
             selected = None
-            for marker in (RESET_MARKER, RESEARCH_MARKER, WATCH_MARKER):
+            for marker in (RESET_MARKER, RESEARCH_MARKER):
                 candidate = content.find(marker)
                 if 0 <= candidate < position:
                     position = candidate

@@ -349,27 +349,6 @@ class ApiClient:
     def undo_assistant_memory_change(self, change_id):
         return self.post(f"/api/v2/assistant/memory/changes/{change_id}/undo")
 
-    def list_assistant_watch(self):
-        return self.get("/api/v2/assistant/watch")
-
-    def create_assistant_watch(self, payload):
-        return self.post("/api/v2/assistant/watch", json=payload)
-
-    def update_assistant_watch(self, watch_id, enabled, expected_version):
-        return self.patch(f"/api/v2/assistant/watch/{watch_id}",
-                          json={"enabled": bool(enabled),
-                                "expectedVersion": expected_version})
-
-    def delete_assistant_watch(self, watch_id, expected_version):
-        return self.delete(f"/api/v2/assistant/watch/{watch_id}",
-                           json={"expectedVersion": expected_version})
-
-    def list_assistant_watch_hits(self, unread_only=None):
-        params = {}
-        if unread_only is not None:
-            params["unreadOnly"] = unread_only
-        return self.get("/api/v2/assistant/watch/hits", params=params or None)
-
     def submit_assistant_recommend_feedback(self, post_id, reason,
                                             request_id=None):
         payload = {"postId": post_id, "reason": reason}

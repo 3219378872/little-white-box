@@ -72,9 +72,9 @@ procfs 显示主机无 IPv6 协议栈时去掉它，否则 nginx 会因 `Address
   `Host: 0.0.0.0` 改写为回环地址，不改子仓原文件）。
 - `/tmp/xbh-run`、日志/pid 目录和 `/tmp/xbh-etc` 为 `0700`，日志为 `0600`；常驻维护器在单个
   stdout 日志超过 5 MiB 时 copy-truncate，并只保留一份 `*.log.1.gz`。
-- `app-up` 会在启动前清空历史 `assistant-rpc`、`assistant-watch`、`assistant-agent` 运行日志；这些
+- `app-up` 会在启动前清空历史 `assistant-rpc`、`assistant-agent` 运行日志；这些
   日志可能含用户输入、工具参数或内容摘要，不跨版本保留。清理前停止并等待旧日志维护器；
-  清理、归档发布与截断共享目录锁，并删除这三个服务被中断轮转留下的临时归档。锁文件不随清理删除。
+  清理、归档发布与截断共享目录锁，并删除这两个服务被中断轮转留下的临时归档。锁文件不随清理删除。
 - 广告与审核权威库 `xbh_ad`（`DB_AD`）、`xbh_review`（`DB_REVIEW`）缺省由 `DB_CONTENT` 换库名推导；
   `middleware-up` 对存量数据卷重放这两个库的幂等基线后再授权，应用账号对 `xbh_review.audit_log`
   只有 SELECT/INSERT。dev 默认 `MODERATION_FIXTURE_ENABLED=1`，e2e 可用文案标记驱动占位精排分数。

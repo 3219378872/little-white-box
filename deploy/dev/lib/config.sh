@@ -64,7 +64,6 @@ MQ_SERVICES=(
   "recommend-mq|$BACKEND|./app/recommend/mq|-f|$ETC_DIR/app/recommend/mq/etc/recommend-consumer.yaml"
   "behavior-log|$BACKEND|./app/pipeline/behaviorlog|-f|$ETC_DIR/app/pipeline/behaviorlog/etc/behavior-log.yaml"
   "content-cleanup|$BACKEND|./app/content/mq/cleanup|-f|$ETC_DIR/app/content/mq/cleanup/etc/content-cleanup.yaml"
-  "assistant-watch|$BACKEND|./app/assistant/mq|-f|$ETC_DIR/app/assistant/mq/etc/watch-consumer.yaml"
   "assistant-agent|$BACKEND|./app/assistant/worker|-f|$ETC_DIR/app/assistant/worker/etc/agent.yaml"
   "review-worker|$BACKEND|./app/review/worker|-f|$ETC_DIR/app/review/worker/etc/review-worker.yaml"
   "ad-mq|$BACKEND|./app/ad/mq|-f|$ETC_DIR/app/ad/mq/etc/ad-consumer.yaml"

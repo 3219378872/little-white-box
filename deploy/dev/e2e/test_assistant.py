@@ -40,21 +40,16 @@ def test_assistant_endpoints_require_auth(anon):
     assert_error(anon.set_agent_consent(True), 401, 1006)
     assert_error(anon.list_assistant_memory(), 401, 1006)
     assert_error(anon.add_assistant_memory("memory", "note"), 401, 1006)
-    assert_error(anon.list_assistant_watch(), 401, 1006)
-    assert_error(anon.create_assistant_watch({
-        "conditionType": "author_new_post",
-        "targetType": "author",
-        "targetId": 1,
-    }), 401, 1006)
     assert_error(anon.submit_assistant_recommend_feedback(1, "dislike"),
                  401, 1006)
 
 
-def test_old_chat_and_hits_routes_are_gone(user):
+def test_old_chat_watch_and_hits_routes_are_gone(user):
     chat = user.client.post("/api/v2/assistant/chat", json={"message": "hi"})
     assert chat.status_code == 404, chat.text[:200]
-    hits = user.client.list_assistant_watch_hits()
-    assert hits.status_code == 404, hits.text[:200]
+    for path in ("/api/v2/assistant/watch", "/api/v2/assistant/watch/hits"):
+        gone = user.client.get(path)
+        assert gone.status_code == 404, (path, gone.text[:200])
     sessions = user.client.post("/api/v2/assistant/sessions")
     assert sessions.status_code == 404, sessions.text[:200]
 
@@ -74,7 +69,7 @@ def test_consent_includes_version_fields(user):
     body = r.json()
     assert isinstance(body.get("consentVersion"), int)
     assert isinstance(body.get("currentVersion"), int)
-    assert body["currentVersion"] == 2
+    assert body["currentVersion"] == 3
 
 
 def test_post_message_requires_consent(user):
@@ -329,176 +324,6 @@ def test_confirm_unknown_call_rejected(user):
         r = client.confirm_assistant_run(run_id, "no-such-call", True)
         assert_error(r, 400, 2)
     finally:
-        client.set_agent_consent(False)
-
-
-def test_watch_crud_and_unknown_condition(user, make_user, published_post):
-    client = user.client
-    other = make_user()
-    post = published_post(other.client)
-    detail = client.post_detail(post["postId"])
-    assert detail.status_code == 200, detail.text[:200]
-    author_id = detail.json()["authorId"]
-    assert author_id != user.id
-    payload = {
-        "conditionType": "author_new_post",
-        "targetType": "author",
-        "targetId": author_id,
-    }
-    # WCH-021: Watch task CRUD requires Agent consent.
-    client.set_agent_consent(False)
-    denied = client.create_assistant_watch(payload)
-    _assert_assistant_store_ok(denied, "POST /assistant/watch no consent")
-    assert_error(denied, 403, 6001)
-
-    _grant(client)
-    task_id = None
-    try:
-        created = client.create_assistant_watch(payload)
-        _assert_assistant_store_ok(created, "POST /assistant/watch")
-        assert created.status_code == 200, created.text[:200]
-        task = created.json().get("task") or {}
-        task_id = task.get("id")
-        task_version = task.get("version")
-        assert isinstance(task_id, int) and task_id > 0
-        assert isinstance(task_version, int) and task_version > 0
-
-        listed = client.list_assistant_watch()
-        _assert_assistant_store_ok(listed, "GET /assistant/watch")
-        assert listed.status_code == 200, listed.text[:200]
-        tasks = listed.json().get("tasks")
-        assert isinstance(tasks, list)
-        assert any(item.get("id") == task_id for item in tasks)
-
-        dup = client.create_assistant_watch(payload)
-        _assert_assistant_store_ok(dup, "POST /assistant/watch duplicate")
-        assert 400 <= dup.status_code < 500, (
-            f"duplicate watch must be conflict/error not 500: "
-            f"{dup.status_code} {dup.text[:200]}")
-
-        patched = client.update_assistant_watch(
-            task_id, False, task_version)
-        _assert_assistant_store_ok(patched, "PATCH /assistant/watch")
-        assert patched.status_code == 200, patched.text[:200]
-        patched_task = patched.json().get("task") or {}
-        patched_version = patched_task.get("version")
-        assert isinstance(patched_version, int)
-        assert patched_version == task_version + 1
-        task_version = patched_version
-
-        stale = client.update_assistant_watch(
-            task_id, True, task_version - 1)
-        assert_error(stale, 409, 2007)
-
-        after = client.list_assistant_watch().json().get("tasks") or []
-        found = next(item for item in after if item.get("id") == task_id)
-        assert found.get("enabled") is False
-        assert found.get("version") == task_version
-
-        unknown = client.create_assistant_watch({
-            "conditionType": "price_drop",
-            "targetType": "post",
-            "targetId": post["postId"],
-        })
-        _assert_assistant_store_ok(unknown, "POST /assistant/watch unknown")
-        assert 400 <= unknown.status_code < 500, (
-            f"unknown conditionType must be 4xx, got {unknown.status_code}: "
-            f"{unknown.text[:200]}")
-    finally:
-        if task_id is not None:
-            deleted = client.delete_assistant_watch(task_id, task_version)
-            _assert_assistant_store_ok(deleted, "DELETE /assistant/watch")
-            assert deleted.status_code == 200, deleted.text[:200]
-            remaining = client.list_assistant_watch()
-            assert remaining.status_code == 200, remaining.text[:200]
-            assert all(item.get("id") != task_id
-                       for item in remaining.json().get("tasks") or [])
-        client.set_agent_consent(False)
-
-
-def test_watch_rejects_own_author_and_revision(user, make_user, published_post):
-    client = user.client
-    other = make_user()
-    own_post = published_post(client)
-    other_post = published_post(other.client)
-    _grant(client)
-    created_ids = []
-    try:
-        assert_error(client.create_assistant_watch({
-            "conditionType": "author_new_post",
-            "targetType": "author",
-            "targetId": user.id,
-        }), 400, 6005)
-        assert_error(client.create_assistant_watch({
-            "conditionType": "post_revised",
-            "targetType": "post",
-            "targetId": own_post["postId"],
-        }), 400, 6005)
-
-        other_author = client.create_assistant_watch({
-            "conditionType": "author_new_post",
-            "targetType": "author",
-            "targetId": other.id,
-        })
-        _assert_assistant_store_ok(other_author, "watch other author")
-        assert other_author.status_code == 200, other_author.text[:200]
-        created_ids.append(other_author.json()["task"])
-
-        other_rev = client.create_assistant_watch({
-            "conditionType": "post_revised",
-            "targetType": "post",
-            "targetId": other_post["postId"],
-        })
-        _assert_assistant_store_ok(other_rev, "watch other revision")
-        assert other_rev.status_code == 200, other_rev.text[:200]
-        created_ids.append(other_rev.json()["task"])
-    finally:
-        for task in created_ids:
-            deleted = client.delete_assistant_watch(task["id"], task["version"])
-            _assert_assistant_store_ok(deleted, "DELETE /assistant/watch")
-        client.set_agent_consent(False)
-
-
-def test_watch_hit_route_removed(user):
-    listed = user.client.list_assistant_watch_hits()
-    assert listed.status_code == 404, listed.text[:200]
-
-
-def test_watch_matcher_delivers_assistant_message(user, make_user, published_post):
-    client = user.client
-    author = make_user()
-    _grant(client)
-    payload = {
-        "conditionType": "author_new_post",
-        "targetType": "author",
-        "targetId": author.id,
-    }
-    created = client.create_assistant_watch(payload)
-    _assert_assistant_store_ok(created, "POST /assistant/watch matcher")
-    assert created.status_code == 200, created.text[:200]
-    task_id = created.json().get("task", {}).get("id")
-    task_version = created.json().get("task", {}).get("version")
-    assert isinstance(task_id, int) and task_id > 0
-    assert isinstance(task_version, int) and task_version > 0
-    try:
-        before = client.get_assistant_thread()
-        _assert_assistant_store_ok(before, "GET /assistant/thread before watch")
-        before_unread = (before.json().get("thread") or {}).get("unreadCount", 0)
-        post = published_post(author.client)
-
-        def unread_increased():
-            listed = client.get_assistant_thread()
-            _assert_assistant_store_ok(listed, "GET /assistant/thread matcher")
-            if listed.status_code != 200:
-                return False
-            unread = (listed.json().get("thread") or {}).get("unreadCount", 0)
-            return unread > before_unread
-
-        eventually(unread_increased, desc="watch proactive assistant unread",
-                   timeout=180.0, interval=1.0)
-        assert post["postId"]
-    finally:
-        client.delete_assistant_watch(task_id, task_version)
         client.set_agent_consent(False)
 
 

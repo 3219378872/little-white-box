@@ -12,3 +12,6 @@ deploy/dev/.env
 
 # dev environment
 .idea
+
+# Local MCP client config
+.mcp.json

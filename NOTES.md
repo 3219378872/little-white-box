@@ -414,7 +414,7 @@ e2e 全量 **111 passed**（含 4 个 agent 用例）；曾出现 verify-code IP
   预算）尚无真模型观测；前端 EVD-assistant-agent-mode-2026-08-26 仍是 partial，
   待补真实网关证据后升 verified。
 
-## Assistant 权威库与 Watch REST（2026-08-27）
+## Assistant 权威库（2026-08-27）
 
 - `DB_ASSISTANT` 缺省时由 `app-up` 从 `DB_CONTENT` 把 schema 名 `xbh_content`
   换成 `xbh_assistant`（凭证与查询串不变）；DSN 只在 `/tmp/xbh-dev.env` 或
@@ -423,9 +423,9 @@ e2e 全量 **111 passed**（含 4 个 agent 用例）；曾出现 verify-code IP
   `middleware-up` 在 patches 后给 `APP_MYSQL_*` 账号授予七个业务 schema 的运行时 DML，给不同的
   `E2E_MYSQL_*` 账号只授予 SELECT；授权前先 REVOKE，避免旧卷残留扩大权限。账号密码以 hex 数据交给
   MySQL `QUOTE()`，不直接插入 SQL 或写入输出。
-- Watch matcher 进程名 `assistant-watch`（`app/assistant/mq`），`just app-up`
-  随 MQ_SERVICES 拉起；订阅 `post-*`，命中写入 `xbh_assistant.watch_hit`。
-  `discussion_spike` 仍未消费行为事件。
+- 2026-10-06 Watch 已整体移除：不再有 `assistant-watch` 进程与 `/api/v2/assistant/watch*`；
+  旧卷里遗留的 `xbh_assistant.watch_*` 表无代码读写，重建卷即消失。Agent 授权版本升到 3，
+  测试账号需重新授权。
 
 ## Hermes 异步 Agent（2026-08-29）
 
