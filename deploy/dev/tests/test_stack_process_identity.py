@@ -104,16 +104,18 @@ service_process_matches log-maintainer 99999999
     def test_all_background_launchers_use_checked_pid_recording(self):
         stack = stack_source()
 
-        self.assertEqual(stack.count("record_started_pid "), 4)
-        self.assertEqual(stack.count("close_app_lifecycle_lock_fd || exit $?"), 4)
-        self.assertEqual(stack.count("cleanup_failed_service_start "), 5)
-        for validation in (
-            'if ! validated_service_pid "$name" "$pidfile" >/dev/null; then',
-            'if ! validated_service_pid log-maintainer "$pidfile" >/dev/null; then',
-            'if ! validated_service_pid llm-fixture "$fixture_pidfile" >/dev/null; then',
-            'if ! validated_service_pid frontend "$pidfile" >/dev/null; then',
-        ):
-            self.assertIn(validation, stack)
+        # One launcher owns fork + token + pid recording + startup validation;
+        # every background process goes through it.
+        self.assertEqual(stack.count("record_started_pid "), 1)
+        self.assertEqual(stack.count("close_app_lifecycle_lock_fd || exit $?"), 1)
+        self.assertIn(
+            'if ! validated_service_pid "$name" "$pidfile" >/dev/null; then', stack
+        )
+        for name in ("log-maintainer", "llm-fixture", "frontend"):
+            with self.subTest(name=name):
+                self.assertIn(f"launch_managed_process {name} ", stack)
+        self.assertIn('launch_managed_process "$name" ', stack)
+        self.assertNotIn("setsid python3", stack)
         self.assertNotIn('echo $! >"$pidfile"', stack)
         self.assertNotIn('echo $! >"$fixture_pidfile"', stack)
 

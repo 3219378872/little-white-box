@@ -1,5 +1,17 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
+#
+# Flutter web frontend: a release bundle built from FRONTEND and served by
+# serve_release.py. The bundle is rebuilt only when its input fingerprint
+# changes (or FORCE_FRONT_BUILD=1).
+
+# Prints the root of the Flutter SDK on PATH; fails when flutter is missing.
+flutter_sdk_dir() {
+  local flutter
+  flutter="$(command -v flutter 2>/dev/null || true)"
+  [[ -n "$flutter" ]] || return 1
+  (cd "$(dirname "$(readlink -f "$flutter")")/.." 2>/dev/null && pwd)
+}
 
 # Local Flutter web engine assets (CanvasKit/Skwasm). Since Flutter 3.44 the
 # engine reads its base URL from a compile-time dart-define only, so the dev
@@ -7,10 +19,8 @@
 # web/ dir and pass --dart-define=FLUTTER_WEB_CANVASKIT_URL=/canvaskit/.
 # The link re-points on every app-up, following SDK upgrades automatically.
 ensure_web_canvaskit() {
-  local fl sdk src dst
-  fl="$(command -v flutter 2>/dev/null || true)"
-  [[ -n "$fl" ]] || return 1
-  sdk="$(cd "$(dirname "$(readlink -f "$fl")")/.." && pwd)"
+  local sdk src dst
+  sdk="$(flutter_sdk_dir)" || return 1
   src="$sdk/bin/cache/flutter_web_sdk/canvaskit"
   [[ -d "$src" ]] || return 1
   dst="$FRONTEND/web/canvaskit"
@@ -22,58 +32,111 @@ ensure_web_canvaskit() {
   [[ -e "$dst/canvaskit.js" ]]
 }
 
-proxy_up() {
-  local was_running=0 running_state container_names status
-  prepare_proxy_conf || return $?
-  if container_names="$(docker ps -a --format '{{.Names}}')"; then
+# Prints the CanvasKit base URL baked into the release build. Prefer
+# same-origin assets (web/canvaskit -> SDK cache); fall back to the
+# engine-revision-pinned gstatic URL when the SDK cache is unavailable, and to
+# /canvaskit/ when even the engine revision is unknown.
+resolve_canvaskit_url() {
+  local sdk stamp rev
+  if ensure_web_canvaskit; then
+    printf '%s\n' /canvaskit/
+    return 0
+  fi
+  echo "warning: flutter_web_sdk canvaskit dir not found, using gstatic fallback" >&2
+  sdk="$(flutter_sdk_dir || true)"
+  stamp="$sdk/bin/cache/engine_stamp.json"
+  if [[ -f "$stamp" ]]; then
+    rev="$(sed -n 's/.*"git_revision": *"\([^"]*\)".*/\1/p' "$stamp" | head -n1)"
+    if [[ -n "$rev" ]]; then
+      printf 'https://www.gstatic.com/flutter-canvaskit/%s/\n' "$rev"
+      return 0
+    fi
+  fi
+  printf '%s\n' /canvaskit/
+}
+
+# Fingerprint paths + contents + build flags + populated SDK identity. No Flutter
+# command is executed by this check; unreadable/missing inputs fail closed.
+front_build_fingerprint() {
+  local flutter
+  flutter="$(command -v flutter)" || return $?
+  python3 "$ROOT/deploy/dev/front_build_inputs.py" "$FRONTEND" "$flutter" "$@"
+}
+
+# True when the stamp from the last successful build matches current inputs.
+front_bundle_fresh() {
+  local current
+  [[ -f "$FRONT_BUILD_STAMP" ]] || return 1
+  current="$(front_build_fingerprint "$@")" || return $?
+  [[ "$current" == "$(<"$FRONT_BUILD_STAMP")" ]]
+}
+
+# Rebuilds BUNDLE with `flutter BUILD_ARGS...` unless it is already fresh.
+# The stamp is removed before building and written only after a build whose
+# inputs did not change underneath it, so a stale stamp can never vouch for a
+# half-written or outdated bundle.
+build_front_bundle_if_stale() {
+  local bundle="$1" logfile="$2"
+  shift 2
+  local before after stamp_tmp build_status
+
+  # Decide whether a build is needed at all.
+  if [[ "${FORCE_FRONT_BUILD:-0}" != "1" && -f "$bundle/index.html" ]] &&
+    front_bundle_fresh "$@"; then
+    echo "frontend bundle up to date; set FORCE_FRONT_BUILD=1 to rebuild"
+    return 0
+  fi
+
+  # Build with proxies unset: pub/engine downloads must not go through them.
+  before="$(front_build_fingerprint "$@")" || return $?
+  rm -f "$FRONT_BUILD_STAMP" || return $?
+  echo "building frontend (release)..."
+  if (
+    cd "$FRONTEND" || exit $?
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+      -u ALL_PROXY -u all_proxy \
+      flutter "$@"
+  ) >>"$logfile" 2>&1; then
     :
   else
-    status=$?
-    echo "failed to list Docker containers while starting $PROXY_NAME" >&2
-    return "$status"
+    build_status=$?
+    rm -f "$FRONT_BUILD_STAMP"
+    echo "frontend build failed; refusing to serve an existing bundle; see $logfile" >&2
+    return "$build_status"
   fi
-  if grep -Fxq -- "$PROXY_NAME" <<<"$container_names"; then
-    running_state="$(docker inspect -f '{{.State.Running}}' "$PROXY_NAME")" || return $?
-    [[ "$running_state" == "true" ]] && was_running=1
-    docker rm -f "$PROXY_NAME" >/dev/null || return $?
+
+  # Reject a bundle whose sources moved during the build.
+  after="$(front_build_fingerprint "$@")" || return $?
+  if [[ "$before" != "$after" ]]; then
+    echo "frontend inputs changed during build; refusing to serve; retry app-up" >&2
+    return 1
   fi
-  echo "starting $PROXY_NAME on :$ENTRY_PORT"
-  docker run -d --name "$PROXY_NAME" --network host --restart unless-stopped \
-    -v "$PROXY_RUNTIME_CONF:/etc/nginx/nginx.conf:ro" \
-    nginx:stable-alpine >/dev/null || return $?
-  if [[ "$was_running" == "0" ]]; then
-    track_app_started_service proxy
-  fi
-  running_state="$(docker inspect -f '{{.State.Running}}' "$PROXY_NAME")" || return $?
-  if [[ "$running_state" != "true" ]]; then
-    echo "$PROXY_NAME exited during startup; check its Docker logs" >&2
+  [[ -f "$bundle/index.html" ]] || {
+    echo "frontend build did not produce index.html" >&2
+    return 1
+  }
+
+  # Publish the stamp atomically.
+  stamp_tmp="$(mktemp "$FRONT_BUILD_STAMP.XXXXXX")" || return $?
+  if ! printf '%s\n' "$after" >"$stamp_tmp" ||
+    ! mv -f "$stamp_tmp" "$FRONT_BUILD_STAMP"; then
+    rm -f "$stamp_tmp"
     return 1
   fi
 }
 
-proxy_down() {
-  local container_names status
-  if container_names="$(docker ps -a --format '{{.Names}}')"; then
-    :
-  else
-    status=$?
-    echo "failed to list Docker containers while stopping $PROXY_NAME" >&2
-    return "$status"
-  fi
-  if grep -Fxq -- "$PROXY_NAME" <<<"$container_names"; then
-    echo "stopping $PROXY_NAME"
-    docker rm -f "$PROXY_NAME" >/dev/null || return $?
-  fi
-}
-
+# Builds (if needed) and serves the frontend release bundle on FRONT_PORT.
 frontend_up() {
   normalize_stack_ports || return $?
   local pidfile="$PID_DIR/frontend.pid"
   local logfile="$LOG_DIR/frontend.log"
-  local pid build_status token cleanup_status=0
+  local bundle="$FRONTEND/build/web"
+  local pid canvaskit_url
   secure_runtime_paths || return $?
   touch "$logfile" || return $?
   chmod 600 "$logfile" || return $?
+
+  # Keep a running server unless a rebuild was forced.
   if pid="$(validated_service_pid frontend "$pidfile")"; then
     if [[ "${FORCE_FRONT_BUILD:-0}" != "1" ]]; then
       echo "already running: frontend pid=$pid"
@@ -85,115 +148,13 @@ frontend_up() {
   fi
   prepare_service_start_state frontend "$pidfile" || return $?
 
-  # CanvasKit base reaches the release build as a compile-time dart-define;
-  # prefer same-origin assets (web/canvaskit -> SDK cache), fall back to the
-  # engine-revision-pinned gstatic URL when the SDK cache is unavailable.
-  local canvaskit_url=""
-  if ensure_web_canvaskit; then
-    canvaskit_url="/canvaskit/"
-  else
-    echo "warning: flutter_web_sdk canvaskit dir not found, using gstatic fallback" >&2
-    local fl sdk rev stamp
-    fl="$(command -v flutter 2>/dev/null || true)"
-    sdk=""
-    if [[ -n "$fl" ]]; then
-      sdk="$(cd "$(dirname "$(readlink -f "$fl")")/.." 2>/dev/null && pwd || true)"
-    fi
-    stamp="$sdk/bin/cache/engine_stamp.json"
-    if [[ -f "$stamp" ]]; then
-      rev="$(sed -n 's/.*"git_revision": *"\([^"]*\)".*/\1/p' "$stamp" | head -n1)"
-      [[ -n "$rev" ]] && canvaskit_url="https://www.gstatic.com/flutter-canvaskit/${rev}/"
-    fi
-  fi
-
-  local bundle="$FRONTEND/build/web"
+  canvaskit_url="$(resolve_canvaskit_url)" || return $?
   local -a build_args=(build web --release -t lib/main.dart --no-web-resources-cdn
-    "--dart-define=FLUTTER_WEB_CANVASKIT_URL=${canvaskit_url:-/canvaskit/}")
-  local before after stamp_tmp
-  local needs_build=0
-  if [[ "${FORCE_FRONT_BUILD:-0}" == "1" || ! -f "$bundle/index.html" ]]; then
-    needs_build=1
-  elif ! front_bundle_fresh "${build_args[@]}"; then
-    needs_build=1
-  fi
-
-  if [[ "$needs_build" == "1" ]]; then
-    before="$(front_build_fingerprint "${build_args[@]}")" || return $?
-    rm -f "$RUN_DIR/front-build.stamp" || return $?
-    echo "building frontend (release)..."
-    if (
-      cd "$FRONTEND" || exit $?
-      env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-        -u ALL_PROXY -u all_proxy \
-        flutter "${build_args[@]}"
-    ) >>"$logfile" 2>&1; then
-      build_status=0
-    else
-      build_status=$?
-    fi
-    if [[ "$build_status" -ne 0 ]]; then
-      rm -f "$RUN_DIR/front-build.stamp"
-      echo "frontend build failed; refusing to serve an existing bundle; see $logfile" >&2
-      return "$build_status"
-    fi
-    after="$(front_build_fingerprint "${build_args[@]}")" || return $?
-    if [[ "$before" != "$after" ]]; then
-      echo "frontend inputs changed during build; refusing to serve; retry app-up" >&2
-      return 1
-    fi
-    [[ -f "$bundle/index.html" ]] || {
-      echo "frontend build did not produce index.html" >&2
-      return 1
-    }
-    stamp_tmp="$(mktemp "$RUN_DIR/front-build.stamp.XXXXXX")" || return $?
-    if ! printf '%s\n' "$after" >"$stamp_tmp" ||
-      ! mv -f "$stamp_tmp" "$RUN_DIR/front-build.stamp"; then
-      rm -f "$stamp_tmp"
-      return 1
-    fi
-  else
-    echo "frontend bundle up to date; set FORCE_FRONT_BUILD=1 to rebuild"
-  fi
+    "--dart-define=FLUTTER_WEB_CANVASKIT_URL=$canvaskit_url")
+  build_front_bundle_if_stale "$bundle" "$logfile" "${build_args[@]}" || return $?
 
   echo "starting frontend on :$FRONT_PORT (static release bundle)"
-  token="$(new_managed_process_token frontend)" || return $?
-  (
-    local started_pid
-    cd "$FRONTEND" || exit $?
-    (
-      close_app_lifecycle_lock_fd || exit $?
-      exec env "$MANAGED_PROCESS_TOKEN_ENV=$token" \
-        setsid python3 "$ROOT/deploy/dev/serve_release.py" "$FRONT_PORT" "$bundle"
-    ) >>"$logfile" 2>&1 </dev/null &
-    started_pid=$!
-    record_started_pid frontend "$started_pid" "$pidfile" "$token" || exit $?
-  ) || return $?
-  sleep 0.1
-  pid="$(<"$pidfile")"
-  if ! validated_service_pid frontend "$pidfile" >/dev/null; then
-    if cleanup_failed_service_start frontend "$pid" "$pidfile" "$token"; then
-      :
-    else
-      cleanup_status=$?
-    fi
-    echo "frontend exited during startup; see $logfile" >&2
-    [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
-    return 1
-  fi
+  launch_managed_process frontend "$pidfile" "$logfile" "$FRONTEND" -- \
+    python3 "$FRONT_SERVER_SCRIPT" "$FRONT_PORT" "$bundle" || return $?
   track_app_started_service frontend
-}
-
-# Fingerprint paths + contents + build flags + populated SDK identity. No Flutter
-# command is executed by this check; unreadable/missing inputs fail closed.
-front_build_fingerprint() {
-  local flutter
-  flutter="$(command -v flutter)" || return $?
-  python3 "$ROOT/deploy/dev/front_build_inputs.py" "$FRONTEND" "$flutter" "$@"
-}
-
-front_bundle_fresh() {
-  local stamp="$RUN_DIR/front-build.stamp" current
-  [[ -f "$stamp" ]] || return 1
-  current="$(front_build_fingerprint "$@")" || return $?
-  [[ "$current" == "$(<"$stamp")" ]]
 }

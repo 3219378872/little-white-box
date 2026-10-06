@@ -62,9 +62,12 @@ procfs 显示主机无 IPv6 协议栈时去掉它，否则 nginx 会因 `Address
 
 ### 运行时产物与数据
 
-- `justfile` 继续 source `deploy/dev/stack.sh` 后调用原函数；该入口按固定清单加载 `lib/` 下的配置、
-  环境、进程身份、进程控制、readiness、中间件、前端、fixture、检查与生命周期模块。默认值与服务
-  数组位于 `lib/config.sh`；模块定位不受调用目录或业务 `ROOT` 覆盖影响。直接 source 模块不是公开入口。
+- `justfile` 继续 source `deploy/dev/stack.sh` 后调用原函数；该入口按固定清单加载 `lib/` 下的配置
+  （`config.sh`，必须首位）、环境加载（`env.sh`）、数据库账号（`db_credentials.sh`）、运行时配置渲染
+  （`runtime_config.sh`）、进程身份、进程控制（统一由 `launch_managed_process` 启动后台进程）、readiness、
+  中间件、入口反代（`proxy.sh`）、前端、fixture、运维命令（`ops.sh`）、检查与生命周期模块。默认值、
+  固定端口/容器名与服务数组位于 `lib/config.sh`；模块定位不受调用目录或业务 `ROOT` 覆盖影响。直接
+  source 模块不是公开入口。
 
 - 进程二进制、pid 与日志在 `/tmp/xbh-run/{bin,pids,logs}`；pidfile 指向直接执行的服务二进制，
   服务配置覆盖副本在 `/tmp/xbh-etc`

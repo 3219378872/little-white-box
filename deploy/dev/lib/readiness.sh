@@ -1,11 +1,16 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
+#
+# Readiness probes: generic port/HTTP/container waits (via wait_ready.py) and
+# the assistant agent's launch-bound post-canary readiness.
 
+# Instant TCP connect check through bash's /dev/tcp.
 port_open() {
   local host="$1" port="$2"
   bash -c "echo >/dev/tcp/${host}/${port}" >/dev/null 2>&1
 }
 
+# wait_port/wait_http/wait_healthy block until ready or fail after SECONDS.
 wait_port() {
   local host="$1" port="$2" seconds="${3:-180}"
   local label="${4:-$host:$port}"
@@ -33,6 +38,8 @@ http_code() {
   printf '%s' "$code"
 }
 
+# True while the agent pidfile, owner token and live process all still
+# describe this exact launch (PID and TOKEN).
 assistant_agent_launch_matches() {
   local pid="$1" token="$2" pidfile="$PID_DIR/assistant-agent.pid"
   local current_pid current_token
@@ -42,13 +49,6 @@ assistant_agent_launch_matches() {
   [[ "$current_token" == "$token" ]] || return 1
   service_process_matches assistant-agent "$pid" || return 1
   process_has_owner_token "$pid" "$token"
-}
-
-process_listens_on_port() {
-  if listening_port_owner_state "$1" "$2"; then
-    return 0
-  fi
-  return 1
 }
 
 # Returns 0 when expected_pid is among the listeners, 1 while no listener PID
@@ -64,6 +64,7 @@ listening_port_owner_state() {
   return 2
 }
 
+# Atomically writes "pid\ntoken" to the agent's .ready file (mode 0600).
 record_assistant_agent_ready() {
   local pid="$1" token="$2" pidfile="$PID_DIR/assistant-agent.pid"
   local ready ready_tmp status=0
@@ -82,6 +83,9 @@ record_assistant_agent_ready() {
   return "$status"
 }
 
+# True when the .ready file was written for this launch and the launch still
+# owns the metrics listener. Identity is re-checked after the port lookup so a
+# PID recycled in between cannot pass.
 assistant_agent_ready_matches() {
   local pid="$1" token="$2" pidfile="$PID_DIR/assistant-agent.pid"
   local ready recorded_pid="" recorded_token=""
@@ -93,7 +97,8 @@ assistant_agent_ready_matches() {
   } <"$ready" || return 1
   [[ "$recorded_pid" == "$pid" && "$recorded_token" == "$token" ]] || return 1
   assistant_agent_launch_matches "$pid" "$token" || return 1
-  process_listens_on_port "$pid" "$ASSISTANT_AGENT_METRICS_PORT" || return 1
+  # Only status 0 counts: "no listener yet" and "foreign listener" both fail.
+  listening_port_owner_state "$pid" "$ASSISTANT_AGENT_METRICS_PORT" || return 1
   assistant_agent_launch_matches "$pid" "$token"
 }
 

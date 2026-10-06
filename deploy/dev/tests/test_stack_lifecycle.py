@@ -563,8 +563,12 @@ builtin printf 'status=%s\n' "$status"
         self.assertIsNotNone(status_fn)
         body = status_fn.group(0)
         self.assertIn("embedding-service online-infer moderation-infer", body)
-        for port in ("50051", "9025", "9026"):
-            self.assertIn(f"algorithm_port_state {port}", body)
+        for port in ("EMBEDDING_PORT", "ONLINE_INFER_PORT", "MODERATION_INFER_PORT"):
+            self.assertIn(f'algorithm_port_state "${port}"', body)
+        config = (ROOT / "deploy/dev/lib/config.sh").read_text(encoding="utf-8")
+        for assignment in ("EMBEDDING_PORT=50051", "ONLINE_INFER_PORT=9025",
+                           "MODERATION_INFER_PORT=9026"):
+            self.assertIn(f"\n{assignment}\n", config)
 
     def test_start_row_keeps_row_fields_local(self):
         script = f"""

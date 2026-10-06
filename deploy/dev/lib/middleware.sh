@@ -1,5 +1,8 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
+#
+# Docker middleware from the backend compose file: start/stop, readiness, and
+# the idempotent schema, account and data seeding that existing volumes need.
 
 # The opt-in algorithm/training services read model-registry credentials
 # without defaults; pass them through (empty when unset) so compose does not
@@ -14,9 +17,11 @@ compose() {
     "$@"
 }
 
+# Runs redis-cli against REDIS_HOST (first endpoint, scheme/db stripped), via
+# the local binary or, when it is missing, inside the Redis container.
 redis_command() {
   local endpoint host port pass
-  endpoint="${REDIS_HOST:-127.0.0.1:6379}"
+  endpoint="${REDIS_HOST:-127.0.0.1:$REDIS_PORT}"
   endpoint="${endpoint%%,*}"
   endpoint="${endpoint#redis://}"
   endpoint="${endpoint#rediss://}"
@@ -24,7 +29,7 @@ redis_command() {
   host="${endpoint%:*}"
   port="${endpoint##*:}"
   if [[ "$host" == "$endpoint" ]]; then
-    port=6379
+    port="$REDIS_PORT"
   fi
   pass="${REDIS_PASSWORD:-}"
 
@@ -48,6 +53,8 @@ redis_command() {
 # every app-up is idempotent and does not touch the MySQL marker.
 wipe_legacy_assistant_redis() {
   local script count_script deleted remaining
+  # Server-side SCAN loops: one UNLINKs every match, the other only counts what
+  # is left so the wipe can be verified independently.
   script="local c='0' local n=0 repeat local r=redis.call('SCAN',c,'MATCH',ARGV[1],'COUNT',500) c=r[1] local k=r[2] if #k>0 then n=n+redis.call('UNLINK',unpack(k)) end until c=='0' return n"
   count_script="local c='0' local n=0 repeat local r=redis.call('SCAN',c,'MATCH',ARGV[1],'COUNT',500) c=r[1] n=n+#r[2] until c=='0' return n"
   echo "wiping legacy assistant redis namespace assistant:v2*"
@@ -119,6 +126,8 @@ rocketmq_bootstrap_topics() {
   printf '%s\n' "${topics[@]}"
 }
 
+# Polls the broker until every bootstrap topic exists (every 2s, up to
+# SECONDS). Consumers fail to subscribe to missing topics, so app-up waits.
 wait_topics() {
   local seconds="${1:-180}"
   local -a needed
@@ -126,7 +135,8 @@ wait_topics() {
   topics="$(rocketmq_bootstrap_topics)" || return $?
   mapfile -t needed <<<"$topics"
   for ((i = 0; i < seconds; i += 2)); do
-    list="$(docker exec xbh-rocketmq-broker sh -c 'sh mqadmin topicList -n rocketmq-namesrv:9876' 2>/dev/null || true)"
+    # rocketmq-namesrv:9876 is the compose-network address seen from inside.
+    list="$(docker exec "$ROCKETMQ_BROKER_CONTAINER" sh -c 'sh mqadmin topicList -n rocketmq-namesrv:9876' 2>/dev/null || true)"
     ok=1
     for t in "${needed[@]}"; do
       if ! grep -qx "$t" <<<"$list"; then
@@ -149,7 +159,7 @@ wait_topics() {
 apply_analytics_schema() {
   local sql="$BACKEND/deploy/sql/xbh_analytics.sql"
   echo "applying ClickHouse analytics schema"
-  docker exec -i xbh-clickhouse clickhouse-client --multiquery <"$sql"
+  docker exec -i "$CLICKHOUSE_CONTAINER" clickhouse-client --multiquery <"$sql"
 }
 
 # The black-box suite reads xbh_analytics through the same read-only e2e
@@ -166,7 +176,7 @@ apply_clickhouse_e2e_grants() {
     return 1
   fi
   echo "seeding read-only ClickHouse e2e account (${e2e_user})"
-  docker exec -i xbh-clickhouse clickhouse-client --multiquery <<SQL
+  docker exec -i "$CLICKHOUSE_CONTAINER" clickhouse-client --multiquery <<SQL
 CREATE USER IF NOT EXISTS \`${e2e_user}\` IDENTIFIED WITH sha256_hash BY '${digest}';
 ALTER USER \`${e2e_user}\` IDENTIFIED WITH sha256_hash BY '${digest}';
 REVOKE ALL ON *.* FROM \`${e2e_user}\`;
@@ -174,12 +184,15 @@ GRANT SELECT ON xbh_analytics.* TO \`${e2e_user}\`;
 SQL
 }
 
+# mysql client as root inside the MySQL container. The password travels in
+# the environment (MYSQL_PWD), never on a command line visible in ps.
 mysql_root() {
-  local pass="${MYSQL_ROOT_PASSWORD:-Xbh@MySQL2024!}"
-  MYSQL_PWD="$pass" docker exec -i -e MYSQL_PWD xbh-mysql \
+  local pass="${MYSQL_ROOT_PASSWORD:-$MYSQL_ROOT_PASSWORD_DEFAULT}"
+  MYSQL_PWD="$pass" docker exec -i -e MYSQL_PWD "$MYSQL_CONTAINER" \
     mysql -uroot --default-character-set=utf8mb4 "$@"
 }
 
+# Hex-encodes a value so SQL can carry it as X'..' data instead of a literal.
 mysql_value_hex() {
   local value="$1" encoded
   encoded="$(printf '%s' "$value" | od -An -v -tx1 | tr -d '[:space:]')"
@@ -293,6 +306,8 @@ apply_sql_patches() {
   echo "applying ${#patches[@]} idempotent sql patch(es)"
   local sql
   for sql in "${patches[@]}"; do
+    # The v3 runtime patch resets legacy Assistant tables; only allow it on a
+    # volume that is already migrated or holds no Assistant data.
     if [[ "${sql##*/}" == 20260829_assistant_runtime_v3.sql ]]; then
       require_safe_assistant_baseline || return $?
     fi
@@ -300,6 +315,8 @@ apply_sql_patches() {
   done
 }
 
+# Succeeds when the assistant_runtime_v3 marker is present, or when every
+# existing xbh_assistant table is empty; refuses otherwise.
 require_safe_assistant_baseline() {
   local marker_table marker_count tables table count
   marker_table="$(mysql_root -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='xbh_assistant' AND table_name='runtime_marker'")" || return $?
@@ -324,42 +341,50 @@ require_safe_assistant_baseline() {
   done <<<"$tables"
 }
 
+# Appends KEY to the caller's `running` array unless its `seen` list already
+# has it, so one process reported by several probes is listed once.
+note_running_app() {
+  if [[ "$seen" != *" $1 "* ]]; then
+    running+=("$1")
+    seen+="$1 "
+  fi
+}
+
+# Schema patches and middleware shutdown must not race live app processes.
+# Collects every running app (by pidfile, orphaned group or process scan) and
+# refuses OPERATION while any is found; log-maintainer is exempt.
 require_apps_stopped_for_patches() {
   local operation="${1:-schema patches}"
   local recovery="${2:-run 'just app-down' before 'just middleware-up'}"
-  local name pidfile pid key seen=" " running=()
+  local name pidfile pid seen=" "
+  local -a running=()
+
+  # Pass 1: recorded pidfiles (live leader or orphaned owned group).
   while IFS= read -r name; do
     [[ "$name" == "log-maintainer" ]] && continue
     pidfile="$PID_DIR/$name.pid"
     if pid="$(validated_service_pid "$name" "$pidfile")"; then
-      key="$name:$pid"
-      if [[ "$seen" != *" $key "* ]]; then
-        running+=("$key")
-        seen+="$key "
-      fi
+      note_running_app "$name:$pid"
     elif pid="$(read_service_pidfile "$pidfile" 2>/dev/null)" &&
       managed_process_group_matches "$name" "$pid" "$pidfile"; then
-      key="$name:group-$pid"
-      if [[ "$seen" != *" $key "* ]]; then
-        running+=("$key")
-        seen+="$key "
-      fi
+      note_running_app "$name:group-$pid"
     fi
   done < <(all_app_names)
+
+  # Pass 2: processes that lost their pidfile but still match a service identity.
   while IFS= read -r name; do
     [[ "$name" == "log-maintainer" ]] && continue
     while IFS= read -r pid; do
       [[ -n "$pid" ]] || continue
-      key="$name:$pid"
-      if [[ "$seen" != *" $key "* ]]; then
-        running+=("$key")
-        seen+="$key "
-      fi
+      note_running_app "$name:$pid"
     done < <(service_process_pids "$name")
   done < <(all_app_names)
+
+  # Pass 3: anything at all on the gateway port.
   if port_open 127.0.0.1 "$GATEWAY_PORT"; then
     running+=("gateway-port:$GATEWAY_PORT")
   fi
+
   if [[ ${#running[@]} -gt 0 ]]; then
     echo "refusing $operation while app processes are running: ${running[*]}" >&2
     echo "$recovery" >&2
@@ -380,12 +405,17 @@ apply_eval_corpus() {
   fi
   echo "seeding eval corpus from ${files[*]}"
   python3 "$script" "${files[@]}" | mysql_root || return $?
-  mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 1300;" </dev/null \
-    | awk '{print "eval corpus posts 1001-1300: "$1}' || return $?
-  mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 2001 AND 4000;" </dev/null \
-    | awk '{print "eval corpus posts 2001-4000: "$1}' || return $?
+  # Report what landed per id range.
+  local range first last
+  for range in "$EVAL_CORPUS_IDS" "$BULK_CORPUS_IDS"; do
+    first="${range%-*}"
+    last="${range#*-}"
+    mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN $first AND $last;" </dev/null \
+      | awk -v range="$range" '{print "eval corpus posts " range ": "$1}' || return $?
+  done
 }
 
+# Prints the document count from an ES _count URL, or 0 when unreachable.
 search_doc_count() {
   python3 - "$1" <<'PY' || echo 0
 import json, sys, urllib.request
@@ -403,7 +433,7 @@ PY
 maybe_rebuild_search() {
   load_env || return $?
   local corpus_n es_n
-  corpus_n="$(mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN 1001 AND 4000 AND status = 1;" </dev/null | tr -d '[:space:]')" || return $?
+  corpus_n="$(mysql_root -N -e "SELECT COUNT(*) FROM xbh_content.post WHERE id BETWEEN ${EVAL_CORPUS_IDS%-*} AND ${BULK_CORPUS_IDS#*-} AND status = 1;" </dev/null | tr -d '[:space:]')" || return $?
   es_n="$(search_doc_count "$SEARCH_INDEX_URL/_count" | tr -d '[:space:]')"
   if [[ -z "$corpus_n" || "$corpus_n" == "0" ]]; then
     echo "skip search rebuild: eval corpus not in mysql"
@@ -427,6 +457,8 @@ wait_search_index() {
   wait_http "$SEARCH_INDEX_URL" "${1:-120}" search-index
 }
 
+# Starts the middleware and brings existing volumes up to date. Apps must be
+# down because schema patches and account grants change what they rely on.
 middleware_up_locked() {
   load_env || return $?
   secure_runtime_paths || return $?
@@ -434,25 +466,34 @@ middleware_up_locked() {
   require_compose_version || return $?
   echo "starting middleware containers"
   compose up -d || return $?
-  # Patches and seeds exec into these containers right away; the published
+
+  # MySQL: patches and seeds exec into the container right away; the published
   # port opens before the server does, so wait for the container healthcheck.
-  wait_healthy xbh-mysql 120 mysql || return $?
+  # Order: test user, patches, late schema baselines, then grants (table-level
+  # review grants need those tables), then eval data.
+  wait_healthy "$MYSQL_CONTAINER" 120 mysql || return $?
   apply_dev_user || return $?
   apply_sql_patches || return $?
   apply_new_schema_baselines || return $?
   apply_dev_db_grants || return $?
   apply_eval_corpus || return $?
-  wait_port 127.0.0.1 6379 60 redis || return $?
-  wait_port 127.0.0.1 2379 60 etcd || return $?
-  wait_port 127.0.0.1 9200 90 elasticsearch || return $?
-  wait_port 127.0.0.1 9876 90 rocketmq-namesrv || return $?
-  wait_port 127.0.0.1 10911 180 rocketmq-broker || return $?
+
+  # Plain TCP services the apps connect to on startup.
+  wait_port 127.0.0.1 "$REDIS_PORT" 60 redis || return $?
+  wait_port 127.0.0.1 "$ETCD_PORT" 60 etcd || return $?
+  wait_port 127.0.0.1 "$ELASTICSEARCH_PORT" 90 elasticsearch || return $?
+  wait_port 127.0.0.1 "$ROCKETMQ_NAMESRV_PORT" 90 rocketmq-namesrv || return $?
+  wait_port 127.0.0.1 "$ROCKETMQ_BROKER_PORT" 180 rocketmq-broker || return $?
   wait_topics 180 || return $?
-  wait_healthy xbh-clickhouse 120 clickhouse || return $?
+
+  # ClickHouse: schema first, then the read-only e2e account that reads it.
+  wait_healthy "$CLICKHOUSE_CONTAINER" 120 clickhouse || return $?
   apply_analytics_schema || return $?
   apply_clickhouse_e2e_grants || return $?
-  wait_http "http://127.0.0.1:3100/ready" 90 loki || return $?
-  wait_port 127.0.0.1 9333 60 seaweedfs-master || true
+
+  wait_http "http://127.0.0.1:$LOKI_PORT/ready" 90 loki || return $?
+  # SeaweedFS is best-effort: only media uploads depend on it.
+  wait_port 127.0.0.1 "$SEAWEEDFS_MASTER_PORT" 60 seaweedfs-master || true
 }
 
 middleware_up() {
@@ -473,15 +514,16 @@ middleware_down() {
 
 # Opt-in algorithm services live behind the compose profile "algorithm" so
 # middleware-only stacks skip model downloads and inference ports. recommend-rpc
-# already dials 127.0.0.1:9025 (ONLINE_INFER_ENDPOINT); until these containers
+# already dials 127.0.0.1:$ONLINE_INFER_PORT (ONLINE_INFER_ENDPOINT); until these containers
 # are up it degrades to rule-based ranking.
 algorithm_up_locked() {
   load_env || return $?
   require_compose_version || return $?
   echo "starting algorithm containers (embedding-service, online-infer, moderation-infer)"
   COMPOSE_PROFILES=algorithm compose up -d || return $?
-  wait_port 127.0.0.1 9025 300 online-infer || return $?
-  wait_port 127.0.0.1 9026 120 moderation-infer || return $?
+  # First start downloads model weights, hence the long online-infer timeout.
+  wait_port 127.0.0.1 "$ONLINE_INFER_PORT" 300 online-infer || return $?
+  wait_port 127.0.0.1 "$MODERATION_INFER_PORT" 120 moderation-infer || return $?
 }
 
 algorithm_up() {

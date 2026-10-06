@@ -1,6 +1,11 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
+#
+# Deterministic assistant gates: temporarily point the running assistant agent
+# at the local LLM/search fixture (e2e/fixtures/llm_provider.py), run the
+# selected e2e scenario, then restore the agent with its real configuration.
 
+# Prints the assistant-agent row from MQ_SERVICES.
 assistant_agent_row() {
   local row
   for row in "${MQ_SERVICES[@]}"; do
@@ -13,6 +18,9 @@ assistant_agent_row() {
   return 1
 }
 
+# Undoes the fixture swap (also used as the EXIT trap): stop the fixture-bound
+# agent and the fixture, then start the agent with the real env. Restarting is
+# skipped if the agent could not be stopped; the first error is returned.
 restore_agent_after_fixture() {
   [[ "$AGENT_FIXTURE_RESTORE" == "1" ]] || return 0
   AGENT_FIXTURE_RESTORE=0
@@ -49,6 +57,9 @@ restore_agent_after_fixture() {
   return "$restore_status"
 }
 
+# Restarts the agent against the fixture for SCENARIO (reset: stream reset and
+# replay; research: structured research with fixture search) and runs the
+# matching e2e tests. The fixture env lives only in the start subshell.
 run_agent_reset_test_with_fixture() {
   local agent_row="$1" scenario="${2:-reset}" test_path reset_flag=0 research_flag=0
   case "$scenario" in
@@ -82,45 +93,30 @@ run_agent_reset_test_with_fixture() {
     "$test_path"
 }
 
+# Runs one fixture SCENARIO end to end; see the header for the sequence.
 e2e_agent_reset_locked() {
   local scenario="${1:-reset}"
   load_env || return $?
   ensure_assistant_db_env || return $?
   secure_runtime_paths || return $?
-  local agent_row fixture_pidfile fixture_log fixture_pid fixture_token agent_pidfile agent_pid
-  local test_status=0 restore_status=0 cleanup_status=0
+  local agent_row fixture_pidfile fixture_log
+  local test_status=0 restore_status=0
   agent_row="$(assistant_agent_row)" || return $?
-  agent_pidfile="$PID_DIR/assistant-agent.pid"
-  if ! agent_pid="$(validated_service_pid assistant-agent "$agent_pidfile")"; then
+
+  # The gate swaps a running agent; it never starts the stack by itself.
+  if ! validated_service_pid assistant-agent "$PID_DIR/assistant-agent.pid" >/dev/null; then
     echo "assistant-agent must be running before the reset fixture gate" >&2
     return 1
   fi
 
+  # Fresh fixture process with an empty log, healthy before the agent moves.
   stop_svc llm-fixture || return $?
   fixture_pidfile="$PID_DIR/llm-fixture.pid"
   fixture_log="$LOG_DIR/llm-fixture.log"
   : >"$fixture_log" || return $?
   chmod 600 "$fixture_log" || return $?
-  fixture_token="$(new_managed_process_token llm-fixture)" || return $?
-  (
-    close_app_lifecycle_lock_fd || exit $?
-    exec env "$MANAGED_PROCESS_TOKEN_ENV=$fixture_token" \
-      setsid python3 "$ROOT/deploy/dev/e2e/fixtures/llm_provider.py" \
-      --port "$AGENT_FIXTURE_PORT" --strict
-  ) >>"$fixture_log" 2>&1 </dev/null &
-  fixture_pid=$!
-  record_started_pid llm-fixture "$fixture_pid" "$fixture_pidfile" "$fixture_token" || return $?
-  sleep 0.1
-  if ! validated_service_pid llm-fixture "$fixture_pidfile" >/dev/null; then
-    if cleanup_failed_service_start llm-fixture "$fixture_pid" "$fixture_pidfile" "$fixture_token"; then
-      :
-    else
-      cleanup_status=$?
-    fi
-    echo "llm fixture exited during startup; see $fixture_log" >&2
-    [[ "$cleanup_status" -eq 0 ]] || return "$cleanup_status"
-    return 1
-  fi
+  launch_managed_process llm-fixture "$fixture_pidfile" "$fixture_log" "$ROOT" -- \
+    python3 "$LLM_FIXTURE_SCRIPT" --port "$AGENT_FIXTURE_PORT" --strict || return $?
   if wait_http "http://127.0.0.1:$AGENT_FIXTURE_PORT/health" 30 llm-fixture; then
     :
   else
@@ -129,6 +125,7 @@ e2e_agent_reset_locked() {
     return "$test_status"
   fi
 
+  # From here on the agent must be restored even if the shell exits early.
   AGENT_FIXTURE_RESTORE=1
   trap restore_agent_after_fixture EXIT
   if run_agent_reset_test_with_fixture "$agent_row" "$scenario"; then
@@ -138,6 +135,7 @@ e2e_agent_reset_locked() {
   fi
   restore_agent_after_fixture || restore_status=$?
   trap - EXIT
+  # A test failure outranks a restore failure in the reported status.
   if [[ "$test_status" -ne 0 ]]; then
     return "$test_status"
   fi
@@ -150,29 +148,4 @@ e2e_agent_reset() {
 
 e2e_agent_research() {
   with_app_lifecycle_lock exclusive e2e_agent_reset_locked research
-}
-
-
-# Review roles are granted only through this ops path (RVW-050): the backend
-# rolectl writes xbh_review.reviewer plus an audit row; no online endpoint exists.
-#   review_role grant <userId> <roles> [markets] [languages]
-#   review_role revoke <userId>
-review_role() {
-  local action="${1:-}" user="${2:-}"
-  if [[ ! "$action" =~ ^(grant|revoke)$ || ! "$user" =~ ^[1-9][0-9]*$ ]]; then
-    echo "usage: just review-role grant <userId> <roles> [markets] [languages] | revoke <userId>" >&2
-    return 2
-  fi
-  load_env || return $?
-  ensure_assistant_db_env || return $?
-  local -a args=("$action" -user "$user")
-  if [[ "$action" == grant ]]; then
-    local roles="${3:-}"
-    [[ -n "$roles" ]] || {
-      echo "review-role grant needs roles (reviewer,qa,policy_admin,qualification_reviewer)" >&2
-      return 2
-    }
-    args+=(-roles "$roles" -markets "${4:-US,DE,ID}" -languages "${5:-en,de,id}")
-  fi
-  (cd "$BACKEND" && go run ./app/review/rolectl "${args[@]}")
 }

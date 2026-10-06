@@ -17,13 +17,13 @@ service_identity() {
   local name="$1"
   case "$name" in
     frontend)
-      printf 'arg|%s\n' "$ROOT/deploy/dev/serve_release.py"
+      printf 'arg|%s\n' "$FRONT_SERVER_SCRIPT"
       ;;
     log-maintainer)
-      printf 'arg|%s\n' "$ROOT/deploy/dev/log_maintainer.py"
+      printf 'arg|%s\n' "$LOG_MAINTAINER_SCRIPT"
       ;;
     llm-fixture)
-      printf 'arg|%s\n' "$ROOT/deploy/dev/e2e/fixtures/llm_provider.py"
+      printf 'arg|%s\n' "$LLM_FIXTURE_SCRIPT"
       ;;
     *)
       is_managed_binary_service "$name" || return 1
