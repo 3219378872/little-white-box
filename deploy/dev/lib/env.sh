@@ -27,6 +27,7 @@ normalize_port_var() {
   printf -v "$name" '%s' "$((10#$port))"
 }
 
+# Entry, frontend and gateway ports are all user-overridable; check them together.
 normalize_stack_ports() {
   local name
   for name in ENTRY_PORT FRONT_PORT GATEWAY_PORT; do
@@ -34,6 +35,7 @@ normalize_stack_ports() {
   done
 }
 
+# The agent metrics port feeds config rendering, readiness and status alike.
 normalize_assistant_agent_metrics_port() {
   normalize_port_var ASSISTANT_AGENT_METRICS_PORT "assistant-agent metrics port"
 }

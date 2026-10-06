@@ -1,6 +1,12 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
+#
+# Process identity and ownership. A PID is "ours" only when it both looks like
+# the service (binary path or script argument) and, once an owner file exists,
+# carries the launch token in its environment. Every stop and status path goes
+# through these checks so a recycled PID is never signalled or reported.
 
+# True for the gateway and every RPC/MQ row: services run from RUN_DIR/bin.
 is_managed_binary_service() {
   local wanted="$1" row name
   [[ "$wanted" == "gateway" ]] && return 0
@@ -32,6 +38,7 @@ service_identity() {
   esac
 }
 
+# Rejects non-numeric PIDs, init/0, and this shell itself as signal targets.
 safe_pid() {
   local pid="$1"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
@@ -39,6 +46,8 @@ safe_pid() {
   [[ "$pid" != "$$" && "$pid" != "$BASHPID" ]]
 }
 
+# Absolute, symlink-resolved path (falls back to the parent dir when the file
+# itself is gone, e.g. a replaced binary).
 canonical_path() {
   local path="$1" resolved
   if resolved="$(readlink -f "$path" 2>/dev/null)" && [[ -n "$resolved" ]]; then
@@ -51,6 +60,8 @@ canonical_path() {
   )
 }
 
+# True when PID runs exactly the EXPECTED binary (a replaced binary shows
+# up as "path (deleted)" in /proc and still counts).
 process_executable_matches() {
   local pid="$1" expected="$2" actual="" command=""
   expected="$(canonical_path "$expected")" || return 1
@@ -70,6 +81,7 @@ process_executable_matches() {
   [[ "$actual" == "$expected" ]]
 }
 
+# True when one argv element of PID equals EXPECTED exactly.
 process_has_exact_arg() {
   local pid="$1" expected="$2" arg command
   if [[ -r "/proc/$pid/cmdline" ]]; then
@@ -85,6 +97,7 @@ process_has_exact_arg() {
   [[ " $command " == *" $expected "* ]]
 }
 
+# True when PID's executable is a python interpreter (python, python3, ...).
 process_executable_is_python() {
   local pid="$1" actual="" command=""
   if [[ -L "/proc/$pid/exe" ]]; then
@@ -98,6 +111,8 @@ process_executable_is_python() {
   [[ "$actual" == python || "$actual" == python[0-9]* ]]
 }
 
+# True when PID is alive and has NAME's identity (binary path or script arg).
+# Identity alone is not ownership: see service_owner_matches.
 service_process_matches() {
   local name="$1" pid="$2" identity kind expected
   safe_pid "$pid" || return 1
@@ -114,6 +129,7 @@ service_process_matches() {
   esac
 }
 
+# All live PIDs carrying NAME's identity, pidfile or not.
 service_process_pids() {
   local name="$1" proc pid
   if [[ -d /proc ]]; then
@@ -129,6 +145,8 @@ service_process_pids() {
   done < <(ps -e -o pid= 2>/dev/null || true)
 }
 
+# Sidecar files of a pidfile: .owner holds the launch token, .ready the
+# assistant agent's verified readiness record.
 pid_owner_file() {
   printf '%s.owner\n' "$1"
 }
@@ -137,6 +155,7 @@ pid_ready_file() {
   printf '%s.ready\n' "$1"
 }
 
+# Prints the PID from a regular (non-symlink) pidfile if it is a safe PID.
 read_service_pidfile() {
   local pidfile="$1" pid=""
   [[ -f "$pidfile" && ! -L "$pidfile" ]] || return 1
@@ -145,6 +164,7 @@ read_service_pidfile() {
   printf '%s\n' "$pid"
 }
 
+# Prints NAME's owner token from the .owner file; tokens always start "NAME:".
 read_service_owner_token() {
   local name="$1" pidfile="$2" owner token=""
   owner="$(pid_owner_file "$pidfile")"
@@ -154,6 +174,7 @@ read_service_owner_token() {
   printf '%s\n' "$token"
 }
 
+# True when PID's environment carries exactly this launch token.
 process_has_owner_token() {
   local pid="$1" expected="$2" entry
   [[ -r "/proc/$pid/environ" ]] || return 1
@@ -176,6 +197,9 @@ service_owner_matches() {
   process_has_owner_token "$pid" "$token"
 }
 
+# True when PID is NAME and still owned under FENCE_MODE:
+#   token          - must carry EXPECTED_TOKEN (captured before state cleanup)
+#   current/legacy - must match the owner file when one exists
 service_process_can_be_stopped() {
   local name="$1" pid="$2" fence_mode="${3:-current}" expected_token="${4:-}"
   local pidfile owner
@@ -214,6 +238,8 @@ capture_service_stop_fence() {
   printf -v "$token_var" '%s' "$token"
 }
 
+# Rewrites the captured owner token after a failed port cleanup, so the next
+# app-down still treats the survivor as token-fenced.
 restore_service_stop_fence() {
   local name="$1" fence_mode="$2" token="$3" pidfile owner owner_tmp status
   [[ "$fence_mode" == "token" ]] || return 0
@@ -243,6 +269,8 @@ restore_service_stop_fence() {
   fi
 }
 
+# Prints "pgrp|session" for a live (non-zombie) PID from /proc/PID/stat.
+# The comm field may contain spaces or ')', so parse after the last ") ".
 process_stat_group() {
   local pid="$1" line fields state pgrp session
   [[ -r "/proc/$pid/stat" ]] || return 1
@@ -254,6 +282,7 @@ process_stat_group() {
   printf '%s|%s\n' "$pgrp" "$session"
 }
 
+# Prints PID's parent PID (procfs, or ps as a portable fallback).
 process_parent_pid() {
   local pid="$1" line fields state parent
   if [[ -r "/proc/$pid/stat" ]]; then
@@ -268,6 +297,7 @@ process_parent_pid() {
   printf '%s\n' "$parent"
 }
 
+# True while PID exists and is not a zombie.
 process_pid_running() {
   local pid="$1"
   safe_pid "$pid" || return 1
@@ -278,6 +308,8 @@ process_pid_running() {
   kill -0 "$pid" 2>/dev/null
 }
 
+# True when some member of session-leader group PGID carries TOKEN. Our
+# launches use setsid, so a managed group's pgid equals its session id.
 process_group_has_owner_token() {
   local pgid="$1" token="$2" proc pid group pgrp session
   [[ -d /proc ]] || return 1
@@ -303,6 +335,7 @@ managed_process_group_matches() {
   process_group_has_owner_token "$pgid" "$token"
 }
 
+# Deletes pidfile, owner and ready files (in that order).
 remove_service_state() {
   local pidfile="$1" owner ready
   owner="$(pid_owner_file "$pidfile")"
@@ -312,6 +345,7 @@ remove_service_state() {
   rm -f "$ready"
 }
 
+# Clears state whose recorded process is gone or not ours, saying so.
 remove_stale_service_state() {
   local name="$1" pidfile="$2" pid="invalid"
   pid="$(read_service_pidfile "$pidfile" 2>/dev/null || true)"

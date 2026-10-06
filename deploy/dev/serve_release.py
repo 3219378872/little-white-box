@@ -22,15 +22,19 @@ WASM_MIME = "application/wasm"
 NO_CACHE_TYPES = (".html", ".js", ".json")
 
 
+# SimpleHTTPRequestHandler with wasm MIME, cache policy and SPA fallback.
 class ReleaseHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=kwargs.pop("directory"), **kwargs)
 
+    # CanvasKit/Skwasm streaming instantiation rejects any other MIME type.
     def guess_type(self, path):
         if path.endswith(".wasm"):
             return WASM_MIME
         return super().guess_type(path)
 
+    # Entry, code/manifests and fallbacks must revalidate; other assets may
+    # be cached briefly because their names are not content-hashed.
     def end_headers(self):
         path = self.translate_path(self.path)
         rel = os.path.relpath(path, self.directory)
@@ -45,6 +49,7 @@ class ReleaseHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "max-age=3600")
         super().end_headers()
 
+    # Deep links without a file extension fall back to index.html.
     def send_head(self):
         path = self.translate_path(self.path)
         pathname = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
@@ -56,6 +61,7 @@ class ReleaseHandler(http.server.SimpleHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
 
+# Loopback only: the same-origin proxy is the public entry.
 def main():
     if len(sys.argv) != 3:
         sys.exit("usage: serve_release.py <port> <build_dir>")

@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
+# Deterministic stand-in for the LLM Responses API and the Tavily search API,
+# used by `just e2e-agent-reset` / `just e2e-agent-research`. Behavior is
+# selected by markers in the latest user message, never by randomness.
 import argparse
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+# The agent's startup canary: one tool call it must see answered before ready.
 CANARY_TOOL = "assistant_capability_canary"
 CANARY_CALL_ID = "fixture-canary-call"
+# Markers the e2e tests embed in prompts to pick a scenario.
 RESET_MARKER = "E2E_STREAM_RESET_MARKER"
 RESEARCH_MARKER = "E2E_RESEARCH_MARKER"
 
 
+# Cross-request state; the reset scenario fails its first stream only.
 class FixtureState:
     def __init__(self):
         self.lock = threading.Lock()
@@ -22,9 +28,11 @@ class FixtureState:
             return self.reset_attempts
 
 
+# One handler for /v1/responses, /responses, /search and /health.
 class Handler(BaseHTTPRequestHandler):
     server_version = "xbh-llm-fixture/1"
 
+    # Silent: the stack captures stdout/stderr into the fixture log.
     def log_message(self, _format, *_args):
         return
 
@@ -34,6 +42,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_error(404)
 
+    # Routing order: search API, startup canary, research scenario, strict-mode
+    # guard, then the reset scenario or a plain completion.
     def do_POST(self):
         if self.path.rstrip("/") not in {"/v1/responses", "/responses", "/search"}:
             self.send_error(404)
@@ -56,6 +66,7 @@ class Handler(BaseHTTPRequestHandler):
                 }]})
             return
 
+        # LLM requests: the canary handshake wins over any scenario marker.
         canary_stage = self._canary_stage(body)
         if canary_stage is not None:
             self._canary(body, canary_stage)
@@ -79,6 +90,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._response("fixture response")
 
+    # Canary handshake: request -> function_call, its output -> acknowledgement.
     def _canary(self, body, stage):
         if stage == "output":
             self._response("canary acknowledged")
@@ -102,6 +114,8 @@ class Handler(BaseHTTPRequestHandler):
                       "total_tokens": 10},
         })
 
+    # Attempt 1 ends the SSE stream mid-answer (no completion event) so the
+    # agent must retry; later attempts complete normally.
     def _reset_stream(self, attempt):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -115,6 +129,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._completed_stream_body("winning response")
 
+    # A full streamed answer: one text delta then response.completed.
     def _completed_stream(self, text):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -140,6 +155,7 @@ class Handler(BaseHTTPRequestHandler):
             },
         })
 
+    # Non-streamed completed answer.
     def _response(self, text):
         self._json({
             "status": "completed",
@@ -152,6 +168,9 @@ class Handler(BaseHTTPRequestHandler):
                       "total_tokens": 10},
         })
 
+    # Scripted research run, one step per request based on which tool outputs
+    # already exist: ask a question, search posts, fall back to web search,
+    # optionally publish a forged citation, then publish the cited answer.
     def _research(self, body):
         scenario, outputs = self._marked_exchange(body, RESEARCH_MARKER)
         if "research-question" not in outputs:
@@ -192,6 +211,8 @@ class Handler(BaseHTTPRequestHandler):
             block = {"kind": "limitation", "text": "社区资料不足，互联网检索暂时不可用，不能作出确定结论。", "citations": []}
         self._tool_response(body, "research-publish", "publish_answer", {"blocks": [block]})
 
+    # Scenario JSON after MARKER in the latest marked user message, plus the
+    # tool outputs that followed it (keyed by call id).
     @staticmethod
     def _marked_exchange(body, marker):
         payload = {}
@@ -209,6 +230,7 @@ class Handler(BaseHTTPRequestHandler):
                 outputs[item.get("call_id")] = item.get("output", "")
         return payload, outputs
 
+    # Which scenario marker appears first in the most recent marked user message.
     @staticmethod
     def _latest_user_marker(body):
         latest = None
@@ -227,6 +249,8 @@ class Handler(BaseHTTPRequestHandler):
                 latest = selected
         return latest
 
+    # "output" once the canary call has its output, "request" while the canary
+    # tool is offered, else None.
     @staticmethod
     def _canary_stage(body):
         call_ids = set()
@@ -251,6 +275,7 @@ class Handler(BaseHTTPRequestHandler):
             return "request"
         return None
 
+    # Text of a message content field (string or list of text parts).
     @staticmethod
     def _input_text(content):
         if isinstance(content, list):
@@ -259,6 +284,7 @@ class Handler(BaseHTTPRequestHandler):
             )
         return content if isinstance(content, str) else ""
 
+    # The `sources` list from a tool output JSON, or [] when unparsable.
     @staticmethod
     def _sources(raw):
         try:
@@ -267,6 +293,8 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             return []
 
+    # Answers with one function call; streamed responses split the arguments
+    # over two deltas to exercise incremental argument parsing.
     def _tool_response(self, body, call_id, name, arguments, draft=""):
         encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
         item = {"type": "function_call", "id": call_id, "call_id": call_id,
@@ -290,11 +318,13 @@ class Handler(BaseHTTPRequestHandler):
                 "output_index": 0, "delta": part})
         self._event("response.completed", {"type": "response.completed", "response": response})
 
+    # Writes and flushes one SSE event.
     def _event(self, event, payload):
         raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         self.wfile.write(f"event: {event}\ndata: {raw}\n\n".encode())
         self.wfile.flush()
 
+    # Writes a JSON body with an explicit Content-Length.
     def _json(self, payload, status=200):
         raw = json.dumps(payload, separators=(",", ":")).encode()
         self.send_response(status)
@@ -304,6 +334,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
 
+# --strict refuses unmarked requests so a misrouted real prompt fails loudly.
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")

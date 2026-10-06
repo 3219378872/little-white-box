@@ -24,6 +24,7 @@ BACKEND = Path(os.environ.get("BACKEND") or Path(__file__).resolve().parents[3] 
 _ROLECTL = None
 
 
+# Runs the backend rolectl ops tool (built once per run) with ARGS.
 def rolectl(*args):
     global _ROLECTL
     if _ROLECTL is None:
@@ -40,10 +41,12 @@ def rolectl(*args):
     assert result.returncode == 0, f"rolectl {args[0]} failed: {result.stderr[-300:]}"
 
 
+# Grants review ROLES in the e2e market/language only.
 def grant(user, roles):
     rolectl("grant", "-user", str(user.id), "-roles", roles, "-markets", MARKET, "-languages", LANGUAGE)
 
 
+# Removes every review role of USER.
 def revoke(user):
     rolectl("revoke", "-user", str(user.id))
 
@@ -54,10 +57,12 @@ def key(prefix="ad"):
     return f"{prefix}-{uuid.uuid4().hex[:16]}"
 
 
+# Ad end time HOURS from now, so e2e ads expire on their own.
 def expiry_ms(hours=2):
     return int((time.time() + hours * 3600) * 1000)
 
 
+# A valid create-ad body in the e2e market; OVERRIDES replace fields.
 def ad_payload(title, **overrides):
     payload = {
         "title": f"{E2E_PREFIX} {title}", "body": "Kopi segar dipanggang setiap minggu", "cta": "Beli",
@@ -68,6 +73,7 @@ def ad_payload(title, **overrides):
     return payload
 
 
+# True when a review task's snapshot belongs to an E2E-prefixed object.
 def is_e2e_task(task):
     snapshot = task.get("snapshotJson") or ""
     return f'"{E2E_PREFIX} ' in snapshot or f'"name":"{E2E_PREFIX}' in snapshot
@@ -101,6 +107,7 @@ def claim_matching(reviewer, predicate, purpose="", timeout=90):
     raise AssertionError("expected review task was not claimable in time")
 
 
+# Submits a review decision for the claimed TASK under its lease.
 def decide(reviewer, task, verdict, policy_codes=None, **extra):
     body = {"leaseGeneration": task["leaseGeneration"], "verdict": verdict, "policyCodes": policy_codes or [],
             "idempotencyKey": key("decision")}
@@ -108,6 +115,7 @@ def decide(reviewer, task, verdict, policy_codes=None, **extra):
     return reviewer.client.post(f"/api/v2/review/tasks/{task['taskId']}/decision", json=body)
 
 
+# Polls OWNER's view of an ad until PREDICATE holds; returns the ad.
 def wait_ad(owner, ad_id, predicate, desc, timeout=90):
     def check():
         r = owner.client.get(f"/api/v2/ads/{ad_id}")

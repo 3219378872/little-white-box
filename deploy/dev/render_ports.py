@@ -14,6 +14,7 @@ import re
 import tempfile
 
 
+# Sets the gateway's HTTP listener port.
 def render_gateway(text: str, port: int) -> str:
     # Only the direct Port of the RestConf block is the HTTP listener; nested
     # Port keys (e.g. DevServer) must stay untouched.
@@ -27,6 +28,7 @@ def render_gateway(text: str, port: int) -> str:
     return text[:section.start('body')] + body + text[section.end('body'):]
 
 
+# Fills the nginx template's port tokens; optionally drops IPv6 listeners.
 def render_proxy(text: str, entry: int, front: int, gateway: int, ipv6: bool = True) -> str:
     # Every token must be present exactly as a template contract, and no
     # unknown token may survive into the nginx config.
@@ -45,6 +47,7 @@ def render_proxy(text: str, entry: int, front: int, gateway: int, ipv6: bool = T
     return text
 
 
+# Points generated media links at the public base URL.
 def render_media_url(text: str, url: str) -> str:
     # Media URLs handed to browsers must point at the same-origin proxy, so the
     # first PublicBaseURL is rewritten as a JSON (hence valid YAML) string.
@@ -57,6 +60,7 @@ def render_media_url(text: str, url: str) -> str:
     raise ValueError('media PublicBaseURL missing from runtime template')
 
 
+# Writes CONTENT to DESTINATION through a sibling temp file and rename.
 def write_atomically(destination: Path, content: str) -> None:
     # A reader never sees a half-written file: write a sibling temp, then rename.
     destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -69,6 +73,7 @@ def write_atomically(destination: Path, content: str) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
+# Subcommand CLI; gateway and proxy share the three port arguments.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -93,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Validates ports, renders the requested kind and writes it atomically.
 def main():
     parser = build_parser()
     args = parser.parse_args()

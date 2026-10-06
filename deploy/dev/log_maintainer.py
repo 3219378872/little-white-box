@@ -56,12 +56,15 @@ def clear_logs(log_dir: Path, names=ASSISTANT_LOG_NAMES) -> None:
                 temp.unlink()
 
 
+# Gzips LOG_PATH to <name>.log.1.gz and truncates it once it exceeds MAX_BYTES.
 def rotate(log_path: Path, max_bytes: int) -> bool:
     # The entire copy / publish / truncate sequence is one cleanup boundary.
     with log_lock(log_path.parent):
         return _rotate_locked(log_path, max_bytes)
 
 
+# Rotation body; the caller holds the log lock. Symlinks and small files are
+# left alone, and the backup is published atomically via a temp file.
 def _rotate_locked(log_path: Path, max_bytes: int) -> bool:
     try:
         info = log_path.stat(follow_symlinks=False)
@@ -98,6 +101,8 @@ def _rotate_locked(log_path: Path, max_bytes: int) -> bool:
             pass
 
 
+# One rotation sweep over LOG_DIR/*.log; returns how many logs rotated. A file
+# that vanishes or cannot be read is skipped so the loop keeps running.
 def maintain(log_dir: Path, max_bytes: int) -> int:
     log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(log_dir, 0o700)
@@ -110,6 +115,7 @@ def maintain(log_dir: Path, max_bytes: int) -> int:
     return rotated
 
 
+# Either clear sensitive assistant logs once, or rotate every --interval.
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("log_dir", type=Path)

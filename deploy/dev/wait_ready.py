@@ -9,6 +9,8 @@ import sys
 import time
 
 
+# Polls PROBE(remaining) until it succeeds or SECONDS pass. A success that
+# lands after the deadline does not count, and sleeps never overshoot it.
 def wait(probe, seconds: float, *, clock=time.monotonic, sleep=time.sleep) -> bool:
     deadline = clock() + seconds
     while (remaining := deadline - clock()) > 0:
@@ -20,6 +22,8 @@ def wait(probe, seconds: float, *, clock=time.monotonic, sleep=time.sleep) -> bo
     return False
 
 
+# Runs one probe command bounded by the remaining time; http probes must print
+# status 200, others may require exact stdout EXPECT.
 def run_probe(command: list[str], remaining: float, http=False, expect: bytes | None = None) -> bool:
     try:
         result = subprocess.run(command, capture_output=True, timeout=remaining, check=False)
@@ -30,6 +34,7 @@ def run_probe(command: list[str], remaining: float, http=False, expect: bytes | 
     return result.returncode == 0 and (expect is None or result.stdout.strip() == expect)
 
 
+# CLI: wait_ready.py {http URL|port HOST PORT|healthy CONTAINER} SECONDS LABEL
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('kind', choices=('http', 'port', 'healthy'))

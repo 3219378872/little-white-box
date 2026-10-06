@@ -17,10 +17,12 @@ _DB_AUTH_MARKERS = ("access denied", "error 1045", "error 1410", "error 1698",
                     "authentication_failed")
 
 
+# The database cannot be probed in this environment; tests skip on it.
 class DbUnavailable(RuntimeError):
     pass
 
 
+# Cached per run: a stopped container stays stopped for the whole session.
 @functools.lru_cache(maxsize=None)
 def _container_running(name):
     try:
@@ -44,6 +46,8 @@ def _require_single_read(sql):
     return statement
 
 
+# Runs one read-only statement inside CONTAINER, passing secrets only via
+# environment variables (never argv, which `ps` would show).
 def _exec(container, argv, sql, *, env=None):
     sql = _require_single_read(sql)
     if not _container_running(container):
@@ -68,6 +72,7 @@ def _exec(container, argv, sql, *, env=None):
     return proc.stdout.strip()
 
 
+# The read-only e2e account comes from the root env file via `just e2e`.
 def _require_e2e_credentials():
     if not MYSQL_USER or not MYSQL_PASSWORD:
         raise DbUnavailable(
@@ -85,6 +90,7 @@ def clickhouse(sql):
                       "CLICKHOUSE_PASSWORD": MYSQL_PASSWORD})
 
 
+# Read-only MySQL probe as the e2e account against database DB.
 def mysql(db, sql):
     _require_e2e_credentials()
     argv = ["mysql", f"-u{MYSQL_USER}", "-h127.0.0.1", "-N", "-B", db]

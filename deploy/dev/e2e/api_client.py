@@ -5,9 +5,12 @@ import uuid
 import requests
 
 
+# Posts created through ApiClient.create_post this run, deleted at session end.
 _created_posts = {}
 
 
+# Deletes every post this run created (newest first) at its current revision;
+# returns human-readable failures instead of raising mid-cleanup.
 def cleanup_created_posts():
     failures = []
     for post_id, client in reversed(list(_created_posts.values())):
@@ -42,6 +45,7 @@ def cleanup_created_posts():
 SSE_TOTAL_TIMEOUT_SECONDS = 600
 
 
+# Collects JSON `data:` frames until a stop type, MAX_FRAMES or the timeout.
 def parse_sse_stream(resp, max_frames=1000, stop_types=None,
                      timeout=SSE_TOTAL_TIMEOUT_SECONDS):
     stop_types = {"done", "error"} if stop_types is None else set(stop_types)
@@ -71,6 +75,7 @@ def parse_sse_stream(resp, max_frames=1000, stop_types=None,
     return frames
 
 
+# The gateway error envelope {code, message} of RESP, or None.
 def error_of(resp):
     try:
         body = resp.json()
@@ -81,6 +86,7 @@ def error_of(resp):
     return None
 
 
+# Asserts RESP is the expected HTTP status carrying business error CODE.
 def assert_error(resp, status, code):
     assert resp.status_code == status, \
         f"expected HTTP {status}, got {resp.status_code}: {resp.text[:200]}"
@@ -90,12 +96,15 @@ def assert_error(resp, status, code):
         f"expected code {code}, got {body['code']} ({body.get('message')})"
 
 
+# Thin wrapper over the public REST API; one method per endpoint so tests
+# read as API calls. Each request carries a fresh X-Trace-Id for log lookup.
 class ApiClient:
     def __init__(self, base_url, token=None):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.session = requests.Session()
 
+    # Same base URL, different bearer token.
     def as_user(self, token):
         return ApiClient(self.base_url, token)
 
@@ -111,6 +120,7 @@ class ApiClient:
         resp.sent_trace_id = trace
         return resp
 
+    # HTTP verb shortcuts.
     def get(self, path, **kw):
         return self.request("GET", path, **kw)
 
@@ -126,12 +136,14 @@ class ApiClient:
     def delete(self, path, **kw):
         return self.request("DELETE", path, **kw)
 
+    # --- Health ---
     def health(self):
         return self.get("/api/v1/health")
 
     def health_ready(self):
         return self.get("/api/v1/health/ready")
 
+    # --- Auth and users ---
     def register(self, payload):
         return self.post("/api/v1/auth/register", json=payload)
 
@@ -169,6 +181,7 @@ class ApiClient:
     def set_personalization(self, enabled):
         return self.put("/api/v2/me/personalization", json={"enabled": enabled})
 
+    # --- Posts and comments ---
     def post_list(self, **params):
         params.setdefault("pageSize", 20)
         return self.get("/api/v1/posts", params=params)
@@ -200,6 +213,7 @@ class ApiClient:
     def comment_delete(self, comment_id):
         return self.delete(f"/api/v1/comment/{comment_id}")
 
+    # --- Interactions and media ---
     def like(self, target_id, target_type):
         return self.post("/api/v1/like",
                          json={"targetId": target_id, "targetType": target_type})
@@ -222,6 +236,7 @@ class ApiClient:
         return self.post(f"/api/v1/media/{kind}", files={"file": file_tuple},
                          data={"idempotencyKey": idempotency_key}, timeout=timeout)
 
+    # --- Behavior, feeds and search ---
     def behavior_events(self, events, anonymous_id=None, session_id=None,
                         auth=None):
         payload = {"events": events}
@@ -252,6 +267,7 @@ class ApiClient:
         return self.get("/api/v2/search/tags",
                         params={"keyword": keyword, **params})
 
+    # --- Messages ---
     def conversations(self, **params):
         return self.get("/api/v2/messages/conversations", params=params)
 
@@ -268,6 +284,7 @@ class ApiClient:
     def unread_summary(self):
         return self.get("/api/v2/messages/unread")
 
+    # --- Assistant ---
     def get_assistant_thread(self):
         return self.get("/api/v2/assistant/thread")
 

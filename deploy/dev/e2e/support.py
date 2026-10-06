@@ -44,6 +44,7 @@ def unique_key(prefix="k"):
     return f"{prefix}{RUN_ID}{_seq:03d}"
 
 
+# A registered test user with its own authenticated client.
 class User:
     def __init__(self, client, user_id, username, password, refresh_token=""):
         self.client = client

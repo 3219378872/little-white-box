@@ -12,6 +12,7 @@ secure_runtime_paths() {
   find "$PID_DIR" -maxdepth 1 -type f -name '*.pid' -exec chmod 600 {} + 2>/dev/null || true
 }
 
+# Assistant logs may contain user prompts; app-up clears them before starting.
 clear_sensitive_assistant_logs() {
   # Stop and wait before cleanup so an old maintainer cannot re-enter rotation.
   # The Python helper also takes the rotation lock and removes interrupted temps.
@@ -63,6 +64,7 @@ owned_group_stop_probe() {
   return 1
 }
 
+# Same contract for a single service PID under its stop fence.
 service_pid_stop_probe() {
   local name="$1" pid="$2" fence_mode="$3" expected_token="$4"
   if service_process_can_be_stopped "$name" "$pid" "$fence_mode" "$expected_token"; then

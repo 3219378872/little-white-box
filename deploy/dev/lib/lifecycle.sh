@@ -17,6 +17,7 @@ with_app_lifecycle_lock() {
     echo "flock is required for application lifecycle operations" >&2
     return 1
   }
+  # Open (and tighten) the lock file, then block until the lock is granted.
   exec {lock_fd}>"$APP_LIFECYCLE_LOCK" || return $?
   chmod 600 "$APP_LIFECYCLE_LOCK" || {
     status=$?
@@ -37,6 +38,8 @@ with_app_lifecycle_lock() {
     }
   fi
 
+  # Run the callback with the fd published; restore the outer fd afterwards so
+  # nested lock calls do not leak theirs. The callback's status wins.
   APP_LIFECYCLE_LOCK_FD="$lock_fd"
   if "$callback" "$@"; then
     status=0
@@ -183,6 +186,7 @@ app_up_locked() {
   return "$status"
 }
 
+# Public entry points below: take the lifecycle lock, run the _locked body.
 app_up() {
   with_app_lifecycle_lock exclusive app_up_locked
 }
@@ -191,8 +195,11 @@ app_up() {
 # ports. Their owner fences are captured first because stop_svc removes the
 # pidfiles that would otherwise prove ownership during the port fallback.
 app_down_locked() {
+  # Keep going after a failure so as much as possible is stopped; report the
+  # first error.
   local name step_status status=0
   local frontend_fence_mode frontend_fence_token gateway_fence_mode gateway_fence_token
+  # 1. Remember the owner fences of the two port-bound services.
   capture_service_stop_fence frontend frontend_fence_mode frontend_fence_token || return $?
   capture_service_stop_fence gateway gateway_fence_mode gateway_fence_token || return $?
   while IFS= read -r name; do
@@ -203,6 +210,8 @@ app_down_locked() {
       [[ "$status" -ne 0 ]] || status="$step_status"
     fi
   done < <(all_app_names | tac)
+  # 2. The proxy, then 3. any owned survivors still holding the frontend and
+  # gateway ports (restoring the fence if that cleanup fails).
   if proxy_down; then
     :
   else
@@ -274,6 +283,7 @@ algorithm_port_state() {
   fi
 }
 
+# Containers, app processes and port probes; read-only, so a shared lock.
 stack_status_locked() {
   normalize_assistant_agent_metrics_port || return $?
   echo "== containers =="
@@ -324,6 +334,7 @@ stack_up() {
   with_app_lifecycle_lock exclusive stack_up_locked
 }
 
+# Full down: apps, optional algorithm containers, then middleware (data kept).
 stack_down_locked() {
   app_down_locked || return $?
   algorithm_down_locked || return $?

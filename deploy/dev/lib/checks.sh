@@ -1,6 +1,10 @@
 # shellcheck shell=bash
 # Loaded by ../stack.sh; functions share the stack namespace.
+#
+# Knowledge, contract and unit-test gates; all read-only toward the children.
 
+# Creates the root knowledge venv and asks each child to set up its own.
+# KNOWLEDGE_PYTHON is unset for the children so each uses its own venv.
 knowledge_setup() {
   python3 -m venv "$ROOT/.venv-knowledge" || return $?
   "$ROOT/.venv-knowledge/bin/python" -m pip install \
@@ -9,6 +13,7 @@ knowledge_setup() {
   env -u KNOWLEDGE_PYTHON make -C "$FRONTEND" knowledge-setup
 }
 
+# Fails with a hint when the knowledge interpreter is missing.
 knowledge_ready() {
   command -v "$KNOWLEDGE_PYTHON" >/dev/null || {
     echo 'Run just knowledge-setup first (or set KNOWLEDGE_PYTHON)' >&2
@@ -16,6 +21,7 @@ knowledge_ready() {
   }
 }
 
+# Root checker unit tests first, then the read-only cross-repo knowledge gate.
 knowledge_check() {
   knowledge_ready || return $?
   (
@@ -27,6 +33,7 @@ knowledge_check() {
     knowledge --root "$ROOT" --backend "$BACKEND" --frontend "$FRONTEND"
 }
 
+# Read-only generated-contract gate (backend generation + frontend SDK).
 contract_check() {
   knowledge_ready || return $?
   PYTHONDONTWRITEBYTECODE=1 "$KNOWLEDGE_PYTHON" "$ROOT/deploy/dev/workspace_checks.py" \
@@ -34,6 +41,7 @@ contract_check() {
 }
 
 
+# Root orchestration unit tests (no real stack needed).
 test_dev() {
   knowledge_ready || return $?
   (

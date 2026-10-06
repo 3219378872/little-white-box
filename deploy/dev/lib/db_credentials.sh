@@ -4,6 +4,7 @@
 # Local MySQL accounts: the app account (runtime DML) and the read-only e2e
 # account must be distinct, strong, and the only identities in service DSNs.
 
+# Account names are plain identifiers so they can be embedded in SQL safely.
 validate_mysql_account_name() {
   local name="$1" label="$2"
   if [[ ! "$name" =~ ^[A-Za-z0-9_]{1,32}$ ]]; then
@@ -162,6 +163,7 @@ rotate_dev_db_credentials_locked() {
   echo "next: run 'just up' (app-down, middleware-up, app-up) to apply them"
 }
 
+# Public entry: rotation rewrites the env file, so it takes the lifecycle lock.
 rotate_dev_db_credentials() {
   with_app_lifecycle_lock exclusive rotate_dev_db_credentials_locked
 }

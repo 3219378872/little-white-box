@@ -500,6 +500,7 @@ middleware_up() {
   with_app_lifecycle_lock exclusive middleware_up_locked
 }
 
+# Stops containers only (volumes kept); refuses while apps still use them.
 middleware_down_locked() {
   # Containers only; the :3002 proxy is app-layer and belongs to proxy_down.
   require_apps_stopped_for_patches \
@@ -530,6 +531,7 @@ algorithm_up() {
   with_app_lifecycle_lock exclusive algorithm_up_locked
 }
 
+# Stops (never removes) the algorithm containers so model weights stay cached.
 algorithm_down_locked() {
   echo "stopping algorithm containers"
   COMPOSE_PROFILES=algorithm compose stop online-infer embedding-service moderation-infer || return $?

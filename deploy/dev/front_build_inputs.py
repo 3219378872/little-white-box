@@ -11,13 +11,18 @@ import stat
 import sys
 
 
+# One sha256 over every input of `flutter build web`: sources, assets,
+# packages, build flags and the SDK identity. Any change means rebuild.
 def fingerprint(frontend: Path, flutter: Path, flags: list[str]) -> str:
     digest = hashlib.sha256()
 
+    # Feed one canonical JSON line into the digest.
     def record(value):
         digest.update(json.dumps(value, ensure_ascii=True, separators=(',', ':')).encode())
         digest.update(b'\n')
 
+    # Hash PATH recursively (links, dirs, files) and fail if it changes while
+    # being read, so a concurrent edit cannot produce a stale-but-valid stamp.
     def visit(path: Path, label: str, parents=frozenset()):
         before = path.lstat()
         if stat.S_ISLNK(before.st_mode):
@@ -49,6 +54,7 @@ def fingerprint(frontend: Path, flutter: Path, flags: list[str]) -> str:
         ):
             raise ValueError(f'build input changed while scanning: {label}')
 
+    # Required inputs first; optional dirs are recorded as absent when missing.
     record(['schema', 1, 'flags', flags])
     for name in ('lib', 'web', 'pubspec.yaml', 'pubspec.lock'):
         visit(frontend / name, name)
@@ -67,6 +73,7 @@ def fingerprint(frontend: Path, flutter: Path, flags: list[str]) -> str:
     return digest.hexdigest()
 
 
+# CLI: front_build_inputs.py FRONTEND FLUTTER [build flags...] -> hex digest
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('frontend', type=Path)
